@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#16382c">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="蘑菇計時">
+  <title>皮克敏蘑菇計時</title>
+  <link rel="icon" href="./assets/icons/app-icon.png">
+  <link rel="apple-touch-icon" href="./assets/icons/app-icon-512.png">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./css/app.css">
+</head>
+<body>
+  <div id="app" class="app">
+    <h1 class="sr-only">皮克敏蘑菇計時</h1>
+    <header class="topbar">
+      <button id="muteBtn" class="mute-btn" type="button" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10h3.2L12 6v12l-4.8-4H4z" fill="currentColor"/><path d="M16 9.2l4.6 5.6M20.6 9.2L16 14.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>靜音</span>
+        <span data-part="name"></span>
+        <span class="mute-more" data-part="more" hidden></span>
+      </button>
+      <div class="top-actions">
+        <button id="uploadBtn" class="icon-btn" type="button" aria-label="上傳截圖">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V5.5M8.2 9.2 12 5.2l3.8 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 15.5V18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <button id="settingsBtn" class="icon-btn" type="button" aria-label="設定">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 3.4v2.2M12 18.4v2.2M3.4 12h2.2M18.4 12h2.2M5.9 5.9l1.6 1.6M16.5 16.5l1.6 1.6M18.1 5.9l-1.6 1.6M7.5 16.5 5.9 18.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </header>
+    <main id="board" class="board"></main>
+  </div>
+  <div id="gestureHint" class="gesture" hidden>
+    <p data-part="text"></p>
+    <div class="gesture-actions">
+      <button id="playHint" class="primary" type="button">播放提示</button>
+      <button id="dismissHint" class="ghost" type="button">先不要響</button>
+    </div>
+  </div>
+  <input id="fileInput" type="file" accept="image/*" multiple hidden>
+  <div id="sheet" class="sheet" hidden>
+    <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle"></div>
+  </div>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

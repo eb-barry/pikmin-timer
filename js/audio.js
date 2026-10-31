@@ -27,21 +27,29 @@ export function createAlarms({ getSoundUrl, onDone, onChange }) {
   const clearCurrent = () => {
     if (!state.current) return;
     clearTimeout(state.current.timer);
-    state.current.audio.pause();
-    state.current.audio.src = "";
+    if (state.current.audio) {
+      state.current.audio.pause();
+      state.current.audio.src = "";
+    }
     state.current = null;
   };
 
   const start = (id) => {
     if (!id || state.current) return;
     stopPreview();
-    const audio = new Audio(getSoundUrl());
-    audio.loop = true;
-    audio.preload = "auto";
+    const url = getSoundUrl();
     const timer = setTimeout(() => finish(id), ALARM_MS);
-    state.current = { id, audio, timer, startedAt: Date.now() };
     state.blocked = false;
     state.failed = false;
+    if (!url) {
+      state.current = { id, audio: null, timer, startedAt: Date.now() };
+      emit();
+      return;
+    }
+    const audio = new Audio(url);
+    audio.loop = true;
+    audio.preload = "auto";
+    state.current = { id, audio, timer, startedAt: Date.now() };
     emit();
     audio.play().catch((error) => {
       if (!state.current || state.current.id !== id) return;
@@ -89,12 +97,16 @@ export function createAlarms({ getSoundUrl, onDone, onChange }) {
       onDone(id);
       return true;
     },
+    needsGesture() {
+      return (state.blocked || state.failed) && !state.current && state.order.length > 0;
+    },
     playFromGesture() {
       state.blocked = false;
       state.failed = false;
       if (!state.current) start(state.order[0]);
     },
     preview(url) {
+      if (!url) return Promise.resolve();
       const resume = state.current?.audio || null;
       if (resume) resume.pause();
       stopPreview();
@@ -116,6 +128,7 @@ export function createAlarms({ getSoundUrl, onDone, onChange }) {
 }
 
 export function unlockAudio(url) {
+  if (!url) return;
   const audio = new Audio(url);
   audio.volume = 0.001;
   audio.play()?.then(() => {

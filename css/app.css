@@ -173,6 +173,9 @@ button, input {
   background: none;
   cursor: pointer;
   color: var(--ink);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .clock-lg { width: min(100%, 420px); margin: 0 auto; }
@@ -184,6 +187,9 @@ button, input {
   width: 100%;
   height: auto;
   filter: drop-shadow(0 12px 16px rgba(6, 28, 22, 0.22));
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+  pointer-events: none;
 }
 
 .face {
@@ -621,6 +627,35 @@ button, input {
 
 .remove-row.is-pending {
   opacity: 0.55;
+}
+
+.work-cover {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #0b5cff;
+  cursor: pointer;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.work-cover[hidden] { display: none; }
+
+.work-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
 }
 
 @media (min-width: 720px) {

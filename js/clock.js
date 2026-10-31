@@ -1,7 +1,5 @@
 export function clockButton({ id, size, empty = false }) {
   return `<button type="button" class="clock clock-${size}${empty ? " clock-empty" : " is-live"}" data-id="${id}" data-size="${size}"${empty ? ' data-empty="1"' : ""}>
-    <span class="bell-glow glow-left"></span>
-    <span class="bell-glow glow-right"></span>
     <img class="art" src="./assets/clock.png" alt="" draggable="false">
     <span class="face">
       <span class="place">${placeIcons()}<span class="place-name" data-part="place"></span></span>

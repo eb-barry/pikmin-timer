@@ -425,7 +425,6 @@ function editMarkup() {
   return `
     <div class="sheet-head"><h2 id="sheetTitle">調整鬧鐘</h2><button type="button" data-action="close">取消</button></div>
     <label class="field">地點<input data-field="location" value="${escapeAttr(view.location)}" autocomplete="off"></label>
-    <label class="field">重生日期<input data-field="date" type="date" value="${toDateInput(when)}"></label>
     <label class="field">重生時間<input data-field="time" type="time" value="${toTimeInput(when)}"></label>
     <div class="inline-actions">
       <button type="button" class="mini" data-action="shift-edit" data-delta="-1">提前 1 分</button>
@@ -515,11 +514,8 @@ function paintEditLive() {
       ? "這個時間已到，儲存後會立刻響鈴。"
       : `還剩 ${formatCountdown(remaining)}，重生 ${formatClock(new Date(view.respawnAt))}`);
   }
-  const when = new Date(view.respawnAt);
-  const date = panel.querySelector("[data-field=date]");
   const time = panel.querySelector("[data-field=time]");
-  if (date && document.activeElement !== date) date.value = toDateInput(when);
-  if (time && document.activeElement !== time) time.value = toTimeInput(when);
+  if (time && document.activeElement !== time) time.value = toTimeInput(new Date(view.respawnAt));
   setText(panel.querySelector("[data-part=error]"), view.error || "");
 }
 
@@ -728,13 +724,10 @@ function updateEditField(input) {
   if (view.type !== "edit") return;
   view.error = "";
   if (input.dataset.field === "location") view.location = input.value;
-  if (input.dataset.field === "date" || input.dataset.field === "time") {
-    const date = panel.querySelector("[data-field=date]").value;
-    const time = panel.querySelector("[data-field=time]").value;
-    const seconds = new Date(view.respawnAt).getSeconds();
-    const [year, month, day] = date.split("-").map(Number);
-    const [hours, minutes] = time.split(":").map(Number);
-    const next = new Date(year, month - 1, day, hours, minutes, seconds, 0);
+  if (input.dataset.field === "time") {
+    const current = new Date(view.respawnAt);
+    const [hours, minutes] = input.value.split(":").map(Number);
+    const next = new Date(current.getFullYear(), current.getMonth(), current.getDate(), hours, minutes, current.getSeconds(), 0);
     if (!Number.isNaN(next.getTime())) view.respawnAt = next.getTime();
   }
   paintEditLive();

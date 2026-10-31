@@ -77,19 +77,26 @@ button, input {
 }
 
 .icon-btn {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.78);
-  background: rgba(255, 255, 255, 0.46);
-  backdrop-filter: blur(12px);
-  color: #143c2c;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   display: grid;
   place-items: center;
   cursor: pointer;
 }
 
-.icon-btn svg,
+.icon-btn img {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 5px 12px rgba(0, 0, 0, 0.42)) brightness(1.08);
+}
+
+.icon-btn:active { transform: scale(0.94); }
+
 .mute-btn svg {
   width: 22px;
   height: 22px;
@@ -177,32 +184,6 @@ button, input {
   width: 100%;
   height: auto;
   filter: drop-shadow(0 12px 16px rgba(6, 28, 22, 0.22));
-}
-
-.bell-glow {
-  position: absolute;
-  z-index: 0;
-  width: 38%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 32, 32, 0.95) 0%, rgba(255, 24, 24, 0.55) 38%, rgba(255, 16, 16, 0) 70%);
-  pointer-events: none;
-  opacity: 0;
-}
-
-.glow-left { left: 4%; top: 2%; }
-.glow-right { right: 4%; top: 2%; }
-
-.clock.is-live .bell-glow {
-  animation: bell-pulse 1.6s ease-in-out infinite;
-}
-
-.clock.is-soon .bell-glow { animation-duration: 0.85s; }
-.clock.is-ringing .bell-glow { animation-duration: 0.5s; }
-
-@keyframes bell-pulse {
-  0%, 100% { opacity: 0.62; }
-  50% { opacity: 1; }
 }
 
 .face {
@@ -647,9 +628,3 @@ button, input {
   .sheet-panel { border-radius: 24px; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .clock.is-live .bell-glow {
-    animation: none;
-    opacity: 0.85;
-  }
-}

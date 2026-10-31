@@ -376,7 +376,7 @@ function settingsMarkup() {
   const sounds = SOUNDS.map((sound) => `
     <label class="sound-row">
       <input type="radio" name="sound" value="${sound.id}" ${sound.id === settings.soundId ? "checked" : ""}>
-      <span class="sound-copy"><span class="sound-name">${sound.label}</span><span class="sound-file">${sound.file}</span></span>
+      <span class="sound-copy"><span class="sound-name">${sound.label}</span></span>
       <button type="button" class="mini" data-action="preview" data-sound="${sound.id}">試聽</button>
     </label>`).join("");
   return `
@@ -384,7 +384,7 @@ function settingsMarkup() {
     <p class="section-label">地板</p>
     <div class="floor-row">${floors}</div>
     <p class="section-label">響鈴</p>
-    <p class="hint">六個鬧鐘共用這一種。之後用同名 MP3 覆蓋 beep1 到 beep6，這裡就會換成新的聲音。</p>
+    <p class="hint">所有鬧鐘共用你選的這一種。</p>
     ${sounds}
     <p class="section-label">冷卻</p>
     <div class="stepper">

@@ -6,7 +6,8 @@ export const defaultSettings = {
   floorId: "floor-01",
   soundId: "beep1",
   cooldownMin: DEFAULT_COOLDOWN_MIN,
-  keepAwake: false
+  keepAwake: false,
+  workMode: false
 };
 
 function validTimer(timer) {
@@ -26,6 +27,7 @@ export function loadState() {
     const cooldown = Number(settings.cooldownMin);
     settings.cooldownMin = Number.isFinite(cooldown) ? Math.min(30, Math.max(0, Math.round(cooldown))) : DEFAULT_COOLDOWN_MIN;
     settings.keepAwake = Boolean(settings.keepAwake);
+    settings.workMode = Boolean(settings.workMode);
     const timers = (Array.isArray(raw.timers) ? raw.timers : [])
       .filter(validTimer)
       .slice(0, MAX_TIMERS)

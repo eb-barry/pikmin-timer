@@ -39,6 +39,7 @@ const fileInput = document.getElementById("fileInput");
 const muteBtn = document.getElementById("muteBtn");
 const gesture = document.getElementById("gestureHint");
 const readout = document.getElementById("reading");
+const workCover = document.getElementById("workCover");
 let readGeneration = 0;
 
 app.style.backgroundImage = `url("${floorUrl(state.settings.floorId)}")`;
@@ -82,9 +83,27 @@ document.addEventListener("keydown", (event) => {
 document.addEventListener("pointerdown", () => {
   unlockAudio(soundUrl(state.settings.soundId));
 }, { once: true });
+document.addEventListener("click", onWorkCoverClick);
+workCover.addEventListener("click", hideWorkCover);
+document.addEventListener("contextmenu", (event) => {
+  if (event.target.closest(".clock, .work-cover")) event.preventDefault();
+});
+document.addEventListener("dragstart", (event) => {
+  if (event.target.closest(".clock, .work-cover")) event.preventDefault();
+});
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") tick();
 });
+
+function onWorkCoverClick(event) {
+  if (!state.settings.workMode || !state.timers.length || state.sheet || !workCover.hidden) return;
+  if (event.target.closest(".clock, button, a, input, label, .sheet, .gesture")) return;
+  workCover.hidden = false;
+}
+
+function hideWorkCover() {
+  workCover.hidden = true;
+}
 
 paintBoard(Date.now(), true);
 alarms.setOrder(alarmOrder(state.timers, Date.now()));
@@ -375,6 +394,10 @@ function settingsMarkup() {
     </div>
     <p class="hint">加在蘑菇消滅剩餘時間後面。已經在倒數的鬧鐘不會改。</p>
     <label class="switch-row">
+      <span><span class="sound-name">工作模式</span><span class="hint">倒數進行中，點鬧鐘以外的畫面會蓋上工作畫面。再點一下就回來。</span></span>
+      <input id="workMode" type="checkbox" ${settings.workMode ? "checked" : ""}>
+    </label>
+    <label class="switch-row">
       <span><span class="sound-name">最後 5 分鐘保持螢幕亮著</span><span class="hint">${"wakeLock" in navigator ? "只有最近的一顆少於 5 分鐘時才會亮。" : "這台瀏覽器可能無法保持亮螢幕。"}</span></span>
       <input id="keepAwake" type="checkbox" ${settings.keepAwake ? "checked" : ""}>
     </label>`;
@@ -569,6 +592,11 @@ function onSheetChange(event) {
     state.settings.keepAwake = input.checked;
     saveState(state);
     syncWakeLock(Date.now());
+  }
+  if (input.id === "workMode") {
+    state.settings.workMode = input.checked;
+    saveState(state);
+    if (!input.checked) hideWorkCover();
   }
   if (state.sheet.type === "confirm") updateDraftField(input);
   if (state.sheet.type === "edit") updateEditField(input);

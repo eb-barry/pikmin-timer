@@ -142,6 +142,7 @@ describe("reading into a draft", () => {
     assert.equal(draft.location, "我改過");
     assert.equal(draft.hours, 3);
     assert.equal(draft.remainingReady, true);
+    assert.equal(draft.clockReady, true);
   });
 });
 

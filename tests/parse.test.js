@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { cleanLocation, parseRemaining, parseScreenshotText, readPlace } from "../js/parse.js";
+import { cleanLocation, parseRemaining, parseScreenshotText, parseSplitDigits, readPlace } from "../js/parse.js";
 
 describe("destruction time", () => {
   it("reads the red remaining line and ignores the mushroom title", () => {
@@ -34,6 +34,11 @@ describe("destruction time", () => {
 
   it("reads a shorter remaining time", () => {
     assert.deepEqual(parseRemaining("剩下12分05秒"), { hours: 0, minutes: 12, seconds: 5 });
+    assert.deepEqual(parseRemaining("剩下18分32秒"), { hours: 0, minutes: 18, seconds: 32 });
+    assert.deepEqual(parseSplitDigits("剩18分", "1832"), { hours: 0, minutes: 18, seconds: 32 });
+    assert.equal(parseSplitDigits("剩18分", "187832"), null);
+    assert.equal(parseRemaining("AVES 小時32 分 28 秒"), null);
+    assert.deepEqual(parseRemaining("剩下3 小時 32 分 28 秒"), { hours: 3, minutes: 32, seconds: 28 });
     assert.equal(cleanLocation("  名人鄉村小公園 > "), "名人鄉村小公園");
     assert.equal(readPlace("名 人 鄉村 小 公園 > |"), "名人鄉村小公園");
     assert.equal(readPlace("名人鄉村小公園》4"), "名人鄉村小公園");

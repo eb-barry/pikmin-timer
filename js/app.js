@@ -27,7 +27,8 @@ const state = {
   settings: loaded.settings,
   timers: loaded.timers,
   sheet: null,
-  layoutSig: ""
+  layoutSig: "",
+  reading: null
 };
 
 const app = document.getElementById("app");
@@ -37,6 +38,8 @@ const panel = sheet.querySelector(".sheet-panel");
 const fileInput = document.getElementById("fileInput");
 const muteBtn = document.getElementById("muteBtn");
 const gesture = document.getElementById("gestureHint");
+const readout = document.getElementById("reading");
+let readGeneration = 0;
 
 app.style.backgroundImage = `url("${floorUrl(state.settings.floorId)}")`;
 
@@ -207,6 +210,9 @@ function paintAlarmChrome(alarm = { playingId: null, waitingIds: [], blocked: fa
 function receiveFiles(files) {
   const images = files.filter((file) => file.type.startsWith("image/"));
   if (!images.length) return;
+  readGeneration += 1;
+  const generation = readGeneration;
+  if (state.sheet) closeSheet();
   const extra = images.length > MAX_TIMERS ? "一次最多 6 張，已取前面 6 張。" : "";
   const now = new Date();
   const drafts = images.slice(0, MAX_TIMERS).map((file) => ({
@@ -222,41 +228,53 @@ function receiveFiles(files) {
     anchorSeconds: now.getSeconds(),
     usedNow: true,
     remainingReady: false,
+    clockReady: false,
     locationDirty: false,
     remainingDirty: false,
     anchorDirty: false,
     ocrNote: "正在讀取…"
   }));
-  openConfirm(drafts, extra);
-  readDrafts(drafts);
+  state.reading = `正在讀取截圖…`;
+  paintReading();
+  readDrafts(drafts, generation, extra);
 }
 
-async function readDrafts(drafts) {
+async function readDrafts(drafts, generation, extra) {
   for (let index = 0; index < drafts.length; index += 1) {
+    if (generation !== readGeneration) return;
     const draft = drafts[index];
-    if (!draftStillOpen(draft)) return;
-    draft.ocrNote = `正在讀取第 ${index + 1} 張，共 ${drafts.length} 張`;
-    paintConfirmLive();
+    state.reading = `正在讀取第 ${index + 1} 張，共 ${drafts.length} 張`;
+    paintReading();
     try {
       const reading = await recognizeScreenshot(draft.file);
-      if (!draftStillOpen(draft)) return;
+      if (generation !== readGeneration) return;
       applyReading(draft, reading, new Date());
       const missing = [];
       if (!draft.location) missing.push("地點");
       if (!draft.remainingReady) missing.push("消滅時間");
+      if (!draft.clockReady) missing.push("截圖時間");
       draft.ocrNote = missing.length ? `請補上${missing.join("、")}` : "已讀到截圖，請再看一眼";
-      fillDraftFields(draft);
     } catch (error) {
       console.warn(error);
-      if (!draftStillOpen(draft)) return;
+      if (generation !== readGeneration) return;
       draft.ocrNote = "讀取失敗，請對照截圖填入";
     }
-    paintConfirmLive();
   }
+  if (generation !== readGeneration) return;
+  state.reading = null;
+  paintReading();
+  const classified = classifyDrafts(state.timers, drafts);
+  const complete = drafts.every((draft) => draft.location.trim() && draft.remainingReady && draft.clockReady);
+  if (complete && canStart(classified, drafts)) {
+    commitList(drafts, new Set());
+    return;
+  }
+  openConfirm(drafts, extra);
 }
 
-function draftStillOpen(draft) {
-  return state.sheet?.type === "confirm" && state.sheet.drafts.includes(draft);
+function paintReading() {
+  readout.hidden = !state.reading;
+  if (state.reading) setText(readout, state.reading);
 }
 
 function openConfirm(drafts, extraNote) {
@@ -675,11 +693,15 @@ function togglePending(button) {
 function commitDrafts() {
   const view = state.sheet;
   if (view?.type !== "confirm") return;
+  commitList(view.drafts, view.pendingRemove);
+}
+
+function commitList(drafts, pendingRemove) {
   const cooldownMs = state.settings.cooldownMin * 60 * 1000;
-  let timers = state.timers.filter((timer) => !view.pendingRemove.has(timer.id));
-  const classified = classifyDrafts(timers, view.drafts);
-  if (!canStart(classified, view.drafts)) return;
-  view.drafts.forEach((draft, index) => {
+  let timers = state.timers.filter((timer) => !pendingRemove.has(timer.id));
+  const classified = classifyDrafts(timers, drafts);
+  if (!canStart(classified, drafts)) return;
+  drafts.forEach((draft, index) => {
     const note = classified.notes[index];
     if (note === "duplicate-lost" || note === "need-location") return;
     const respawn = draftToRespawn(draft, cooldownMs);
@@ -695,7 +717,8 @@ function commitDrafts() {
   });
   state.timers = timers;
   saveState(state);
-  closeSheet();
+  for (const draft of drafts) URL.revokeObjectURL(draft.previewUrl);
+  if (state.sheet?.type === "confirm") closeSheet();
   paintBoard(Date.now(), true);
   alarms.setOrder(alarmOrder(state.timers, Date.now()));
 }

@@ -1,5 +1,5 @@
 import Tesseract from "../vendor/tesseract/tesseract.esm.min.js";
-import { matchClock, parseRemaining, parseSplitDigits, readPlace } from "./parse.js";
+import { matchClock, parseDigitRun, parseRemaining, parseSplitDigits, readPlace } from "./parse.js";
 
 const { createWorker } = Tesseract;
 
@@ -64,10 +64,11 @@ function recolor(canvas, keep) {
   return canvas;
 }
 
-async function readText(worker, canvas, mode, whitelist = "") {
+async function readText(worker, canvas, mode, whitelist = "", dpi = 300) {
   await worker.setParameters({
     tessedit_pageseg_mode: mode,
-    tessedit_char_whitelist: whitelist
+    tessedit_char_whitelist: whitelist,
+    user_defined_dpi: String(dpi)
   });
   const { data } = await worker.recognize(canvas);
   return data.text || "";
@@ -229,6 +230,45 @@ function trimAfterText(canvas) {
   return crop(canvas, 0, 0, Math.min(width, cut + 12), height, 1);
 }
 
+function keepWidestRun(canvas, gapLimit = 22) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const { width, height } = canvas;
+  const data = context.getImageData(0, 0, width, height).data;
+  const columns = [];
+  for (let x = 0; x < width; x += 1) {
+    let ink = 0;
+    for (let y = 0; y < height; y += 2) {
+      if (data[(y * width + x) * 4] < 48) ink += 1;
+    }
+    columns.push(ink > 1);
+  }
+  const runs = [];
+  let start = -1;
+  let gap = 0;
+  const close = (end) => {
+    if (start < 0) return;
+    runs.push({ start, end, width: end - start + 1 });
+    start = -1;
+  };
+  columns.forEach((ink, x) => {
+    if (ink) {
+      if (start < 0) start = x;
+      gap = 0;
+    } else if (start >= 0) {
+      gap += 1;
+      if (gap > gapLimit) close(x - gap);
+    }
+  });
+  close(width - 1);
+  if (!runs.length) return canvas;
+  const best = runs.reduce((winner, run) => (run.width > winner.width ? run : winner));
+  const margin = 10;
+  const left = Math.max(0, best.start - margin);
+  const cropWidth = Math.min(width - left, best.end - left + margin * 2);
+  if (cropWidth >= width - 8) return canvas;
+  return crop(canvas, left, 0, cropWidth, height, 1);
+}
+
 function textLine(canvas) {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   const { width, height } = canvas;
@@ -268,29 +308,141 @@ function textLine(canvas) {
   return crop(canvas, 0, top, width, Math.max(1, bottom - top), 1);
 }
 
+function downsample(canvas, factor) {
+  const next = document.createElement("canvas");
+  next.width = Math.max(1, Math.round(canvas.width * factor));
+  next.height = Math.max(1, Math.round(canvas.height * factor));
+  const context = next.getContext("2d");
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(canvas, 0, 0, next.width, next.height);
+  return next;
+}
+
+function enlargeLine(canvas, trim, useTextLine = true) {
+  const prepared = useTextLine ? textLine(canvas) : canvas;
+  const isolated = keepWidestRun(trim(tightInk(prepared)), 22);
+  // Four-times enlargement cleans the tiny white strokes. Tesseract reads the smoother half-size copy.
+  const big = pad(scaleCanvas(isolated, 4, true), 36);
+  return { half: downsample(big, 0.5), big };
+}
+
 function placeImage(full) {
   const native = recolor(
     crop(full, full.width * 0.08, full.height * 0.078, full.width * 0.84, full.height * 0.072, 1),
     isPlaceInk
   );
-  return pad(scaleCanvas(trimAfterText(tightInk(textLine(native))), 2, true), 36);
+  return enlargeLine(native, trimAfterText);
+}
+
+function countdownSpan(full) {
+  const sheet = findSheetTop(full);
+  const { width, height } = full;
+  const anchor = sheet == null ? height * 0.5 : sheet;
+  const top = Math.max(0, Math.floor(anchor - height * 0.062));
+  const bottom = Math.min(height - 1, Math.floor(anchor - height * 0.016));
+  const context = full.getContext("2d", { willReadFrequently: true });
+  const data = context.getImageData(0, 0, width, height).data;
+  const x0 = Math.floor(width * 0.012);
+  const xEnd = Math.floor(width * 0.58);
+  const rows = [];
+  for (let y = top; y <= bottom; y += 1) {
+    let ink = 0;
+    let first = xEnd;
+    let last = 0;
+    for (let x = x0; x < xEnd; x += 1) {
+      const pixel = (y * width + x) * 4;
+      if (isWhiteInk(data[pixel], data[pixel + 1], data[pixel + 2])) {
+        ink += 1;
+        if (x < first) first = x;
+        if (x > last) last = x;
+      }
+    }
+    rows.push({ ink, span: last > first ? last - first : 0 });
+  }
+  const clusters = [];
+  let start = -1;
+  let sum = 0;
+  let span = 0;
+  const close = (end) => {
+    if (start < 0) return;
+    const band = end - start + 1;
+    if (band >= 8 && band <= height * 0.028 && sum >= 80 && span >= 70) {
+      clusters.push({ start: top + start, end: top + end, sum, span });
+    }
+    start = -1;
+    sum = 0;
+    span = 0;
+  };
+  rows.forEach((row, index) => {
+    if (row.ink >= 8) {
+      if (start < 0) start = index;
+      sum += row.ink;
+      span = Math.max(span, row.span);
+    } else {
+      close(index - 1);
+    }
+  });
+  close(rows.length - 1);
+  if (!clusters.length) return null;
+  const chosen = clusters.reduce((best, cluster) => (cluster.end > best.end ? cluster : best));
+  const margin = 4;
+  const y = Math.max(0, chosen.start - margin);
+  return {
+    x: width * 0.008,
+    y,
+    w: width * 0.7,
+    h: Math.min(height - y, chosen.end - chosen.start + 1 + margin * 2)
+  };
+}
+
+function maskedCountdown(native) {
+  const strict = recolor(copyCanvas(native), isWhiteInk);
+  const masked = inkCount(strict) >= 40 ? strict : recolor(native, isCountdownInk);
+  const line = enlargeLine(masked, (image) => image, false);
+  return inkCount(line.big) >= 30 ? line : null;
 }
 
 function countdownBands(full) {
+  const images = [];
+  const span = countdownSpan(full);
+  if (span) {
+    const line = maskedCountdown(crop(full, span.x, span.y, span.w, span.h, 1));
+    if (line) images.push(line);
+  }
+  if (images.length) return images;
   const sheet = findSheetTop(full);
-  const width = full.width;
-  const height = full.height;
-  const anchor = sheet == null ? height * 0.488 : sheet;
-  const make = (delta, band, portion, scale) => {
-    const native = crop(full, 0, Math.max(0, anchor - height * delta), width * portion, Math.max(18, height * band), 1);
-    const strict = recolor(copyCanvas(native), isWhiteInk);
-    const masked = inkCount(strict) >= 80 ? strict : recolor(native, isCountdownInk);
-    return pad(tightInk(trimAfterText(scaleCanvas(masked, scale))), 36);
-  };
-  return [
-    make(0.03, 0.018, 0.5, 3),
-    make(0.046, 0.038, 0.68, 3)
-  ];
+  const anchor = sheet == null ? full.height * 0.488 : sheet;
+  const fallback = maskedCountdown(crop(
+    full,
+    0,
+    Math.max(0, anchor - full.height * 0.03),
+    full.width * 0.62,
+    Math.max(18, full.height * 0.022),
+    1
+  ));
+  return fallback ? [fallback] : [];
+}
+
+function acceptRemaining(text) {
+  if (/[A-Za-z]{2,}/.test(String(text || ""))) return null;
+  return parseRemaining(text);
+}
+
+async function readCountdown(worker, images) {
+  const halfOpen = await readText(worker, images.half, "13", "", 96);
+  const fromHalf = acceptRemaining(halfOpen);
+  if (fromHalf) return fromHalf;
+  const halfLine = await readText(worker, images.half, "7", "", 300);
+  const fromLine = acceptRemaining(halfLine);
+  if (fromLine) return fromLine;
+  const listed = await readText(worker, images.big, "7", "剩下小時分秒0123456789", 300);
+  const fromListed = parseRemaining(listed);
+  if (fromListed) return fromListed;
+  const digits = await readText(worker, images.big, "7", "0123456789", 300);
+  const compact = String(digits || "").replace(/\D/g, "");
+  if (compact.length !== 4) return parseSplitDigits(listed, digits);
+  return parseSplitDigits(listed, digits) || parseDigitRun(digits, `${listed} ${halfOpen} ${halfLine}`);
 }
 
 function pickClock(texts) {
@@ -317,27 +469,14 @@ export async function recognizeScreenshot(source) {
   ));
   const lightTime = await readText(worker, lightStatus, "7", "0123456789:");
   const darkTime = await readText(worker, darkStatus, "7", "0123456789:");
-  let location = readPlace(await readText(worker, placeImage(full), "7", ""));
-  if (!location) {
-    const lightPill = pad(recolor(
-      crop(full, width * 0.15, height * 0.082, width * 0.7, height * 0.058, 3),
-      isLightInk
-    ));
-    location = readPlace(await readText(worker, lightPill, "7", ""));
-    if (!location) {
-      const colorPill = crop(full, width * 0.15, height * 0.082, width * 0.7, height * 0.058, 2);
-      location = readPlace(await readText(worker, colorPill, "7", ""));
-    }
-  }
+  const place = placeImage(full);
+  const placeText = await readText(worker, place.half, "13", "", 96);
+  let location = readPlace(placeText);
+  if (!location) location = readPlace(await readText(worker, place.big, "13", "", 96));
 
   let remaining = null;
   for (const remain of countdownBands(full)) {
-    const line = await readText(worker, remain, "13", "");
-    remaining = parseRemaining(line);
-    if (remaining) break;
-    const listed = await readText(worker, remain, "7", "剩下小時分秒0123456789");
-    const digits = await readText(worker, remain, "7", "0123456789");
-    remaining = parseRemaining(listed) || parseSplitDigits(listed, digits);
+    remaining = await readCountdown(worker, remain);
     if (remaining) break;
   }
 

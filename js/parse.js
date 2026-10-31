@@ -22,8 +22,25 @@ export function parseSplitDigits(listed, digits) {
   const compact = String(digits || "").replace(/\D/g, "");
   if (!head || !compact.startsWith(head[1])) return null;
   const rest = compact.slice(head[1].length);
-  if (!/^\d{2}$/.test(rest)) return null;
+  if (!/^\d{1,2}$/.test(rest)) return null;
   return clampRemain(0, Number(head[1]), Number(rest));
+}
+
+export function parseDigitRun(digits, witness = "") {
+  const note = squash(witness);
+  if (!/分|秒|剩/.test(note) || parseRemaining(note)) return null;
+  const compact = String(digits || "").replace(/\D/g, "");
+  const take = (hours, minutes, seconds) => (
+    minutes <= 59 && seconds <= 59 ? clampRemain(hours, minutes, seconds) : null
+  );
+  if (compact.length === 3) {
+    if (!/分/.test(note)) return null;
+    return take(0, Number(compact.slice(0, 2)), Number(compact.slice(2)));
+  }
+  if (compact.length === 4) return take(0, Number(compact.slice(0, 2)), Number(compact.slice(2)));
+  if (compact.length === 5) return take(Number(compact.slice(0, 1)), Number(compact.slice(1, 3)), Number(compact.slice(3)));
+  if (compact.length === 6) return take(Number(compact.slice(0, 2)), Number(compact.slice(2, 4)), Number(compact.slice(4)));
+  return null;
 }
 
 export function parseRemaining(text) {
@@ -37,7 +54,7 @@ export function parseRemaining(text) {
   if (minutes && /剩下|分/.test(source)) {
     return clampRemain(0, Number(minutes[1]), Number(minutes[2]));
   }
-  const seconds = source.match(/剩下(\d+)秒/);
+  const seconds = source.match(/^剩下(\d{1,2})秒$/);
   if (seconds) return clampRemain(0, 0, Number(seconds[1]));
   const english = String(text || "").match(/(\d+)\s*h(?:ours?)?\s*(\d+)\s*m(?:in(?:utes?)?)?\s*(\d+)\s*s(?:ec(?:onds?)?)?/i);
   if (english) return clampRemain(Number(english[1]), Number(english[2]), Number(english[3]));

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { cleanLocation, parseRemaining, parseScreenshotText, parseSplitDigits, readPlace } from "../js/parse.js";
+import { cleanLocation, parseDigitRun, parseRemaining, parseScreenshotText, parseSplitDigits, readPlace } from "../js/parse.js";
 
 describe("destruction time", () => {
   it("reads the red remaining line and ignores the mushroom title", () => {
@@ -35,7 +35,15 @@ describe("destruction time", () => {
   it("reads a shorter remaining time", () => {
     assert.deepEqual(parseRemaining("剩下12分05秒"), { hours: 0, minutes: 12, seconds: 5 });
     assert.deepEqual(parseRemaining("剩下18分32秒"), { hours: 0, minutes: 18, seconds: 32 });
+    assert.deepEqual(parseRemaining("剩31分6秒"), { hours: 0, minutes: 31, seconds: 6 });
+    assert.deepEqual(parseRemaining("31分06秒"), { hours: 0, minutes: 31, seconds: 6 });
+    assert.deepEqual(parseRemaining("剩下12秒"), { hours: 0, minutes: 0, seconds: 12 });
+    assert.equal(parseRemaining("剩下18532秒"), null);
     assert.deepEqual(parseSplitDigits("剩18分", "1832"), { hours: 0, minutes: 18, seconds: 32 });
+    assert.deepEqual(parseSplitDigits("31分", "316"), { hours: 0, minutes: 31, seconds: 6 });
+    assert.deepEqual(parseDigitRun("3106", "剩下"), { hours: 0, minutes: 31, seconds: 6 });
+    assert.deepEqual(parseDigitRun("15918", "剩下"), { hours: 1, minutes: 59, seconds: 18 });
+    assert.equal(parseDigitRun("405625", "405,625"), null);
     assert.equal(parseSplitDigits("剩18分", "187832"), null);
     assert.equal(parseRemaining("AVES 小時32 分 28 秒"), null);
     assert.deepEqual(parseRemaining("剩下3 小時 32 分 28 秒"), { hours: 3, minutes: 32, seconds: 28 });

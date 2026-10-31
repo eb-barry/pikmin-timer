@@ -1,10 +1,11 @@
+import { SOUNDS } from "./catalog.js";
 import { DEFAULT_COOLDOWN_MIN, MAX_TIMERS } from "./time.js";
 
 export const STORAGE_KEY = "pikmin-timer-v1";
 
 export const defaultSettings = {
   floorId: "floor-01",
-  soundId: "beep1",
+  soundId: SOUNDS[0].id,
   cooldownMin: DEFAULT_COOLDOWN_MIN,
   keepAwake: false,
   workMode: false
@@ -20,7 +21,7 @@ export function loadState() {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
     const settings = { ...defaultSettings, ...(raw.settings || {}) };
     if (!/^floor-(0[1-9]|1[0-3])$/.test(settings.floorId)) settings.floorId = defaultSettings.floorId;
-    if (!/^beep[1-6]$/.test(settings.soundId)) settings.soundId = defaultSettings.soundId;
+    if (!SOUNDS.some((sound) => sound.id === settings.soundId)) settings.soundId = defaultSettings.soundId;
     const cooldown = Number(settings.cooldownMin);
     settings.cooldownMin = Number.isFinite(cooldown) ? Math.min(30, Math.max(0, Math.round(cooldown))) : DEFAULT_COOLDOWN_MIN;
     settings.keepAwake = Boolean(settings.keepAwake);

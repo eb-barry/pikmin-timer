@@ -12,11 +12,8 @@ export const defaultSettings = {
 };
 
 function validTimer(timer) {
-  return Boolean(timer)
-    && typeof timer.id === "string"
-    && typeof timer.location === "string"
-    && timer.location.trim()
-    && Number.isFinite(Number(timer.respawnAt));
+  if (!timer || typeof timer.id !== "string" || typeof timer.location !== "string") return false;
+  return timer.respawnAt == null || Number.isFinite(Number(timer.respawnAt));
 }
 
 export function loadState() {
@@ -35,8 +32,8 @@ export function loadState() {
       .map((timer) => ({
         id: timer.id,
         location: timer.location.trim(),
-        respawnAt: Number(timer.respawnAt),
-        createdAt: Number(timer.createdAt) || Number(timer.respawnAt)
+        respawnAt: timer.respawnAt == null ? null : Number(timer.respawnAt),
+        createdAt: Number(timer.createdAt) || (Number.isFinite(Number(timer.respawnAt)) ? Number(timer.respawnAt) : Date.now())
       }));
     return { settings, timers };
   } catch {

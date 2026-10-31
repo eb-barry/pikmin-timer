@@ -118,6 +118,12 @@ function isWhiteInk(red, green, blue) {
   return red >= 226 && green >= 226 && blue >= 214 && max - min < 32;
 }
 
+function isPlaceInk(red, green, blue) {
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  return min >= 224 && max - min < 24;
+}
+
 function pad(canvas, amount = 28) {
   const next = document.createElement("canvas");
   next.width = canvas.width + amount * 2;
@@ -180,14 +186,14 @@ function inkCount(canvas) {
   return count;
 }
 
-function scaleCanvas(canvas, factor) {
+function scaleCanvas(canvas, factor, smooth = true) {
   if (factor <= 1) return canvas;
   const next = document.createElement("canvas");
   next.width = Math.max(1, Math.round(canvas.width * factor));
   next.height = Math.max(1, Math.round(canvas.height * factor));
   const context = next.getContext("2d");
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = "high";
+  context.imageSmoothingEnabled = smooth;
+  if (smooth) context.imageSmoothingQuality = "high";
   context.drawImage(canvas, 0, 0, next.width, next.height);
   return next;
 }
@@ -221,6 +227,53 @@ function trimAfterText(canvas) {
   }
   if (cut >= width - 8) return canvas;
   return crop(canvas, 0, 0, Math.min(width, cut + 12), height, 1);
+}
+
+function textLine(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const { width, height } = canvas;
+  const data = context.getImageData(0, 0, width, height).data;
+  const rows = [];
+  for (let y = 0; y < height; y += 1) {
+    let ink = 0;
+    for (let x = 0; x < width; x += 1) {
+      if (data[(y * width + x) * 4] < 80) ink += 1;
+    }
+    rows.push(ink);
+  }
+  const peak = rows.reduce((best, ink) => Math.max(best, ink), 0);
+  if (peak < 8) return canvas;
+  const gate = Math.max(8, peak * 0.28);
+  let best = null;
+  let start = -1;
+  let total = 0;
+  const close = (end) => {
+    if (start < 0) return;
+    if (!best || total > best.total) best = { start, end, total };
+    start = -1;
+    total = 0;
+  };
+  rows.forEach((ink, y) => {
+    if (ink >= gate) {
+      if (start < 0) start = y;
+      total += ink;
+    } else {
+      close(y - 1);
+    }
+  });
+  close(height - 1);
+  if (!best) return canvas;
+  const top = Math.max(0, best.start - 8);
+  const bottom = Math.min(height, best.end + 9);
+  return crop(canvas, 0, top, width, Math.max(1, bottom - top), 1);
+}
+
+function placeImage(full) {
+  const native = recolor(
+    crop(full, full.width * 0.08, full.height * 0.078, full.width * 0.84, full.height * 0.072, 1),
+    isPlaceInk
+  );
+  return pad(scaleCanvas(trimAfterText(tightInk(textLine(native))), 2, true), 36);
 }
 
 function countdownBands(full) {
@@ -262,17 +315,20 @@ export async function recognizeScreenshot(source) {
     crop(full, 0, 0, width * 0.5, height * 0.07, 3),
     isDarkInk
   ));
-  const lightPill = pad(recolor(
-    crop(full, width * 0.15, height * 0.082, width * 0.7, height * 0.058, 3),
-    isLightInk
-  ));
-  const colorPill = crop(full, width * 0.15, height * 0.082, width * 0.7, height * 0.058, 2);
-
   const lightTime = await readText(worker, lightStatus, "7", "0123456789:");
   const darkTime = await readText(worker, darkStatus, "7", "0123456789:");
-  const pillText = await readText(worker, lightPill, "7", "");
-  let location = readPlace(pillText);
-  if (!location) location = readPlace(await readText(worker, colorPill, "7", ""));
+  let location = readPlace(await readText(worker, placeImage(full), "7", ""));
+  if (!location) {
+    const lightPill = pad(recolor(
+      crop(full, width * 0.15, height * 0.082, width * 0.7, height * 0.058, 3),
+      isLightInk
+    ));
+    location = readPlace(await readText(worker, lightPill, "7", ""));
+    if (!location) {
+      const colorPill = crop(full, width * 0.15, height * 0.082, width * 0.7, height * 0.058, 2);
+      location = readPlace(await readText(worker, colorPill, "7", ""));
+    }
+  }
 
   let remaining = null;
   for (const remain of countdownBands(full)) {

@@ -1,7 +1,7 @@
 // The alarm is an absolute respawn instant: screenshot clock + remaining
 // destruction time + cooldown. The digits are that instant minus now.
 
-export const MAX_TIMERS = 6;
+export const MAX_TIMERS = 7;
 export const ALARM_MS = 30 * 1000;
 export const DEFAULT_COOLDOWN_MIN = 4;
 export const JUST_TAKEN_MS = 90 * 1000;
@@ -60,6 +60,22 @@ export function suggestAnchor({ hour, minute, meridiem = null, now }) {
     return { anchor: new Date(now.getTime()), usedNow: true };
   }
   return { anchor: best, usedNow: false };
+}
+
+export function clampCooldown(minutes, seconds = 0) {
+  const parsedMin = Number(minutes);
+  if (!Number.isFinite(parsedMin)) return { cooldownMin: DEFAULT_COOLDOWN_MIN, cooldownSec: 0 };
+  const cooldownMin = Math.min(5, Math.max(1, Math.round(parsedMin)));
+  const parsedSec = Number(seconds);
+  const cooldownSec = cooldownMin === 5
+    ? 0
+    : Math.min(59, Math.max(0, Math.round(Number.isFinite(parsedSec) ? parsedSec : 0)));
+  return { cooldownMin, cooldownSec };
+}
+
+export function cooldownDuration(settings = {}) {
+  const clamped = clampCooldown(settings.cooldownMin, settings.cooldownSec);
+  return (clamped.cooldownMin * 60 + clamped.cooldownSec) * 1000;
 }
 
 export function draftToRespawn(draft, cooldownMs) {

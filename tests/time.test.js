@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   alarmOrder,
   applyReading,
+  clampCooldown,
   describeDraft,
   draftToRespawn,
   formatClock,
@@ -81,6 +82,15 @@ describe("screenshot clock", () => {
   });
 });
 
+describe("cooldown", () => {
+  it("allows 1 to 4 minutes with seconds, and locks 5 minutes at 0 seconds", () => {
+    assert.deepEqual(clampCooldown(4, 30), { cooldownMin: 4, cooldownSec: 30 });
+    assert.deepEqual(clampCooldown(5, 40), { cooldownMin: 5, cooldownSec: 0 });
+    assert.deepEqual(clampCooldown(0, 20), { cooldownMin: 1, cooldownSec: 20 });
+    assert.deepEqual(clampCooldown(9, 10), { cooldownMin: 5, cooldownSec: 0 });
+  });
+});
+
 describe("anchor edits", () => {
   it("flips between morning and afternoon", () => {
     assert.equal(toggleMeridiem("01:18"), "13:18");
@@ -128,7 +138,7 @@ describe("placing uploads", () => {
   });
 
   it("leaves a full board unchanged until one clock is deleted", () => {
-    const existing = Array.from({ length: 6 }, (_, index) => ({
+    const existing = Array.from({ length: 7 }, (_, index) => ({
       id: `id-${index}`,
       location: `公園${index}`,
       respawnAt: index + 1,
@@ -136,7 +146,7 @@ describe("placing uploads", () => {
     }));
     const result = nextTimers(existing, [draft("新公園")], 0, 1000, () => "new");
     assert.equal(result.dropped, 1);
-    assert.equal(result.timers.length, 6);
+    assert.equal(result.timers.length, 7);
     assert.equal(result.timers.some((timer) => timer.location === "新公園"), false);
   });
 

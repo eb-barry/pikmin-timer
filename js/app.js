@@ -9,6 +9,8 @@ import {
   formatClock,
   formatCountdown,
   MAX_TIMERS,
+  clampCooldown,
+  cooldownDuration,
   nextTimers,
   splitBoard,
   toDateInput,
@@ -31,7 +33,6 @@ const sheet = document.getElementById("sheet");
 const panel = sheet.querySelector(".sheet-panel");
 const fileInput = document.getElementById("fileInput");
 const muteBtn = document.getElementById("muteBtn");
-const gesture = document.getElementById("gestureHint");
 const readout = document.getElementById("reading");
 const workCover = document.getElementById("workCover");
 let readGeneration = 0;
@@ -53,8 +54,6 @@ const alarms = createAlarms({
 document.getElementById("uploadBtn").addEventListener("click", () => fileInput.click());
 document.getElementById("settingsBtn").addEventListener("click", openSettings);
 muteBtn.addEventListener("click", () => alarms.mute());
-document.getElementById("playHint").addEventListener("click", () => alarms.playFromGesture());
-document.getElementById("dismissHint").addEventListener("click", () => alarms.dismissHead());
 fileInput.addEventListener("change", () => {
   const files = [...fileInput.files];
   fileInput.value = "";
@@ -80,6 +79,9 @@ document.addEventListener("keydown", (event) => {
 document.addEventListener("pointerdown", () => {
   unlockAudio(soundUrl(state.settings.soundId));
 }, { once: true });
+document.addEventListener("pointerdown", () => {
+  if (alarms.needsGesture()) alarms.playFromGesture();
+});
 document.addEventListener("click", onWorkCoverClick);
 workCover.addEventListener("click", hideWorkCover);
 document.addEventListener("contextmenu", (event) => {
@@ -236,14 +238,6 @@ function paintAlarmChrome(alarm = { playingId: null, waitingIds: [], blocked: fa
     more.hidden = alarm.waitingIds.length === 0;
     setText(more, `還有 ${alarm.waitingIds.length}`);
   }
-  const headId = alarm.playingId || alarm.waitingIds[0];
-  const head = state.timers.find((timer) => timer.id === headId);
-  const showHint = Boolean(head) && (alarm.blocked || alarm.failed) && !alarm.playingId;
-  gesture.hidden = !showHint;
-  if (showHint) {
-    const reason = alarm.failed ? "這段響鈴沒有播放出來" : "點一下播放重生提示";
-    setText(gesture.querySelector("[data-part=text]"), `${head.location.trim() || "這顆鬧鐘"}：${reason}`);
-  }
 }
 
 function receiveFiles(files) {
@@ -252,7 +246,7 @@ function receiveFiles(files) {
   readGeneration += 1;
   const generation = readGeneration;
   if (state.sheet) closeSheet();
-  const extra = images.length > MAX_TIMERS ? "一次最多 6 張，已取前面 6 張。" : "";
+  const extra = images.length > MAX_TIMERS ? `一次最多 ${MAX_TIMERS} 張，已取前面 ${MAX_TIMERS} 張。` : "";
   const now = new Date();
   const drafts = images.slice(0, MAX_TIMERS).map((file) => ({
     localId: crypto.randomUUID(),
@@ -295,7 +289,7 @@ async function readDrafts(drafts, generation, extra) {
   const placed = nextTimers(
     state.timers,
     drafts,
-    state.settings.cooldownMin * 60 * 1000,
+    cooldownDuration(state.settings),
     Date.now(),
     () => crypto.randomUUID()
   );
@@ -305,7 +299,7 @@ async function readDrafts(drafts, generation, extra) {
   paintReading();
   paintBoard(Date.now(), true);
   alarms.setOrder(alarmOrder(state.timers, Date.now()));
-  if (placed.dropped) showNotice("已經有 6 顆鬧鐘，多出來的沒有放上去。請先刪掉一顆再上傳。");
+  if (placed.dropped) showNotice(`已經有 ${MAX_TIMERS} 顆鬧鐘，多出來的沒有放上去。請先刪掉一顆再上傳。`);
   else if (extra) showNotice(extra);
 }
 
@@ -388,22 +382,30 @@ function settingsMarkup() {
     <label class="sound-row">
       <input type="radio" name="sound" value="${sound.id}" ${sound.id === settings.soundId ? "checked" : ""}>
       <span class="sound-copy"><span class="sound-name">${sound.label}</span></span>
-      <button type="button" class="mini" data-action="preview" data-sound="${sound.id}">試聽</button>
+      ${sound.id === "mute" ? "" : `<button type="button" class="mini" data-action="preview" data-sound="${sound.id}">試聽</button>`}
     </label>`).join("");
+  const secondsLocked = settings.cooldownMin === 5;
   return `
     <div class="sheet-head"><h2 id="sheetTitle">設定</h2><button type="button" data-action="close">完成</button></div>
-    <p class="section-label">地板</p>
+    <p class="section-label">背景</p>
     <div class="floor-row">${floors}</div>
     <p class="section-label">響鈴</p>
     <p class="hint">所有鬧鐘共用你選的這一種。</p>
     ${sounds}
-    <p class="section-label">冷卻</p>
-    <div class="stepper">
-      <button type="button" data-action="cool" data-delta="-1" aria-label="減少冷卻">−</button>
-      <strong data-part="cool">${settings.cooldownMin} 分鐘</strong>
-      <button type="button" data-action="cool" data-delta="1" aria-label="增加冷卻">+</button>
+    <p class="section-label">冷卻時間</p>
+    <div class="cool-grid">
+      <div class="stepper">
+        <button type="button" data-action="cool" data-unit="min" data-delta="-1" aria-label="減少分鐘">−</button>
+        <strong data-part="cool-min">${settings.cooldownMin} 分</strong>
+        <button type="button" data-action="cool" data-unit="min" data-delta="1" aria-label="增加分鐘">+</button>
+      </div>
+      <div class="stepper">
+        <button type="button" data-action="cool" data-unit="sec" data-delta="-1" aria-label="減少秒數" ${secondsLocked ? "disabled" : ""}>−</button>
+        <strong data-part="cool-sec">${settings.cooldownSec} 秒</strong>
+        <button type="button" data-action="cool" data-unit="sec" data-delta="1" aria-label="增加秒數" ${secondsLocked ? "disabled" : ""}>+</button>
+      </div>
     </div>
-    <p class="hint">加在蘑菇消滅剩餘時間後面。已經在倒數的鬧鐘不會改。</p>
+    <p class="hint">加在蘑菇消滅剩餘時間後面。已經在倒數的鬧鐘不會改。5 分鐘時秒數固定為 0。</p>
     <label class="switch-row">
       <span><span class="sound-name">工作模式</span><span class="hint">倒數進行中，點鬧鐘以外的畫面會蓋上工作畫面。再點一下就回來。</span></span>
       <input id="workMode" type="checkbox" ${settings.workMode ? "checked" : ""}>
@@ -475,10 +477,11 @@ function onSheetClick(event) {
       saveState(state);
       const radio = panel.querySelector(`input[name="sound"][value="${sound.id}"]`);
       if (radio) radio.checked = true;
-      alarms.preview(soundUrl(sound.id))?.catch(() => {});
+      const url = soundUrl(sound.id);
+      if (url) alarms.preview(url)?.catch(() => {});
     }
   }
-  if (action === "cool") changeCooldown(Number(button.dataset.delta));
+  if (action === "cool") changeCooldown(button.dataset.unit, Number(button.dataset.delta));
   if (action === "save-edit") saveEdit();
   if (action === "delete-edit") deleteEdit(button);
 }
@@ -519,10 +522,24 @@ function chooseFloor(id) {
   });
 }
 
-function changeCooldown(delta) {
-  state.settings.cooldownMin = Math.min(30, Math.max(0, state.settings.cooldownMin + delta));
+function changeCooldown(unit, delta) {
+  const next = clampCooldown(
+    state.settings.cooldownMin + (unit === "min" ? delta : 0),
+    state.settings.cooldownSec + (unit === "sec" ? delta : 0)
+  );
+  state.settings.cooldownMin = next.cooldownMin;
+  state.settings.cooldownSec = next.cooldownSec;
   saveState(state);
-  setText(panel.querySelector("[data-part=cool]"), `${state.settings.cooldownMin} 分鐘`);
+  paintCooldown();
+}
+
+function paintCooldown() {
+  setText(panel.querySelector("[data-part=cool-min]"), `${state.settings.cooldownMin} 分`);
+  setText(panel.querySelector("[data-part=cool-sec]"), `${state.settings.cooldownSec} 秒`);
+  const locked = state.settings.cooldownMin === 5;
+  panel.querySelectorAll("[data-unit=sec]").forEach((button) => {
+    button.disabled = locked;
+  });
 }
 
 function updateEditField(input) {

@@ -127,6 +127,25 @@ button, input {
   font-size: 12px;
 }
 
+.reading {
+  position: fixed;
+  z-index: 30;
+  left: 50%;
+  top: calc(62px + env(safe-area-inset-top));
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 28px);
+  margin: 0;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--deep);
+  font-weight: 800;
+  text-align: center;
+}
+
+.reading[hidden] { display: none; }
+
 .board {
   width: min(460px, 100%);
   margin: 6px auto 0;
@@ -152,14 +171,27 @@ button, input {
 .clock-lg { width: min(100%, 420px); margin: 0 auto; }
 
 .clock .art {
+  position: relative;
+  z-index: 1;
   display: block;
   width: 100%;
   height: auto;
-  overflow: visible;
-  filter: drop-shadow(0 12px 16px rgba(6, 28, 22, 0.28));
+  filter: drop-shadow(0 12px 16px rgba(6, 28, 22, 0.22));
 }
 
-.bell-glow { opacity: 0; }
+.bell-glow {
+  position: absolute;
+  z-index: 0;
+  width: 38%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 32, 32, 0.95) 0%, rgba(255, 24, 24, 0.55) 38%, rgba(255, 16, 16, 0) 70%);
+  pointer-events: none;
+  opacity: 0;
+}
+
+.glow-left { left: 4%; top: 2%; }
+.glow-right { right: 4%; top: 2%; }
 
 .clock.is-live .bell-glow {
   animation: bell-pulse 1.6s ease-in-out infinite;
@@ -175,10 +207,11 @@ button, input {
 
 .face {
   position: absolute;
+  z-index: 2;
   left: 50%;
-  top: 55.2%;
-  width: 58%;
-  height: 42%;
+  top: 61%;
+  width: 64%;
+  height: 50%;
   transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;

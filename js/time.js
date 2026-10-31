@@ -171,5 +171,6 @@ export function applyReading(draft, reading, now) {
     draft.anchorTime = toTimeInput(suggested.anchor);
     draft.anchorSeconds = suggested.anchor.getSeconds();
     draft.usedNow = suggested.usedNow;
+    draft.clockReady = true;
   }
 }

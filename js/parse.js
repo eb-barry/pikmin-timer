@@ -14,10 +14,25 @@ function clampRemain(hours, minutes, seconds) {
   };
 }
 
+export function parseSplitDigits(listed, digits) {
+  if (parseRemaining(listed)) return null;
+  const han = squash(listed);
+  if (/小時/.test(han) || !/分/.test(han)) return null;
+  const head = han.match(/(\d+)/);
+  const compact = String(digits || "").replace(/\D/g, "");
+  if (!head || !compact.startsWith(head[1])) return null;
+  const rest = compact.slice(head[1].length);
+  if (!/^\d{2}$/.test(rest)) return null;
+  return clampRemain(0, Number(head[1]), Number(rest));
+}
+
 export function parseRemaining(text) {
   const source = squash(text);
-  const withHours = source.match(/剩下(\d+)小時(\d+)分(\d+)秒/) || source.match(/(\d+)小時(\d+)分(\d+)秒/);
-  if (withHours) return clampRemain(Number(withHours[1]), Number(withHours[2]), Number(withHours[3]));
+  const withHours = source.match(/(\d+)\D{0,4}小時\D{0,4}(\d+)\D{0,4}分\D{0,4}(\d+)\D{0,4}秒/);
+  if (withHours && /剩下|小時/.test(source)) {
+    return clampRemain(Number(withHours[1]), Number(withHours[2]), Number(withHours[3]));
+  }
+  if (/小時/.test(source)) return null;
   const minutes = source.match(/剩下(\d+)分(\d+)秒/) || source.match(/(\d+)分(\d+)秒/);
   if (minutes && /剩下|分/.test(source)) {
     return clampRemain(0, Number(minutes[1]), Number(minutes[2]));

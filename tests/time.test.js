@@ -1,14 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  alarmOrder,
   applyReading,
-  canStart,
-  classifyDrafts,
   describeDraft,
   draftToRespawn,
   formatClock,
   formatCountdown,
   meridiemLabel,
+  nextTimers,
   shiftAnchor,
   splitBoard,
   suggestAnchor,
@@ -96,30 +96,55 @@ describe("anchor edits", () => {
   });
 });
 
-describe("slots", () => {
-  it("replaces the same place instead of taking another slot", () => {
-    const existing = [{ location: "名人鄉村小公園" }, { location: "另一座公園" }];
-    const result = classifyDrafts(existing, [{ location: "名人鄉村小公園", remainingReady: true }]);
-    assert.deepEqual(result.notes, ["replace"]);
-    assert.equal(result.total, 2);
-    assert.equal(result.overflow, 0);
-    assert.equal(canStart(result, [{ remainingReady: true }]), true);
+function draft(location, ready = true) {
+  return {
+    location,
+    remainingReady: ready,
+    anchorDate: "2026-10-30",
+    anchorTime: "13:18",
+    anchorSeconds: 0,
+    hours: 1,
+    minutes: 0,
+    seconds: 0
+  };
+}
+
+describe("placing uploads", () => {
+  it("replaces the same place and still starts when the name or countdown is missing", () => {
+    const existing = [
+      { id: "park", location: "名人鄉村小公園", respawnAt: 1, createdAt: 1 },
+      { id: "other", location: "另一座公園", respawnAt: 2, createdAt: 2 }
+    ];
+    const result = nextTimers(existing, [
+      draft("名人鄉村小公園"),
+      draft("", false)
+    ], 4 * 60 * 1000, 1000, (index) => `new-${index}`);
+    assert.equal(result.dropped, 0);
+    assert.equal(result.timers.length, 3);
+    assert.equal(result.timers[0].id, "park");
+    assert.equal(result.timers[0].respawnAt, at(13, 18).getTime() + 60 * 60 * 1000 + 4 * 60 * 1000);
+    assert.equal(result.timers[2].location, "");
+    assert.equal(result.timers[2].respawnAt, null);
   });
 
-  it("blocks the seventh mushroom until one is removed", () => {
-    const existing = Array.from({ length: 6 }, (_, index) => ({ location: `公園${index}` }));
-    const result = classifyDrafts(existing, [{ location: "新公園" }]);
-    assert.equal(result.overflow, 1);
-    assert.equal(canStart(result, [{ remainingReady: true }]), false);
+  it("leaves a full board unchanged until one clock is deleted", () => {
+    const existing = Array.from({ length: 6 }, (_, index) => ({
+      id: `id-${index}`,
+      location: `公園${index}`,
+      respawnAt: index + 1,
+      createdAt: index
+    }));
+    const result = nextTimers(existing, [draft("新公園")], 0, 1000, () => "new");
+    assert.equal(result.dropped, 1);
+    assert.equal(result.timers.length, 6);
+    assert.equal(result.timers.some((timer) => timer.location === "新公園"), false);
   });
 
-  it("asks to remove a duplicated row in the same batch", () => {
-    const result = classifyDrafts([], [
-      { location: "名人鄉村小公園" },
-      { location: "名人鄉村小公園" }
-    ]);
-    assert.deepEqual(result.notes, ["duplicate-lost", "add"]);
-    assert.equal(canStart(result, [{ remainingReady: true }, { remainingReady: true }]), false);
+  it("keeps one clock when the same place is read twice", () => {
+    const result = nextTimers([], [draft("名人鄉村小公園", false), draft("名人鄉村小公園")], 0, 1000, (index) => `id-${index}`);
+    assert.equal(result.timers.length, 1);
+    assert.equal(result.timers[0].id, "id-0");
+    assert.equal(result.timers[0].respawnAt, at(13, 18).getTime() + 60 * 60 * 1000);
   });
 });
 
@@ -155,5 +180,17 @@ describe("board order", () => {
     ]);
     assert.equal(board.hero.id, "soon");
     assert.deepEqual(board.rest.map((timer) => timer.id), ["mid", "late"]);
+  });
+
+  it("keeps a clock with no countdown off the alarm list and behind timed clocks", () => {
+    const timers = [
+      { id: "unknown", location: "", respawnAt: null, createdAt: 1 },
+      { id: "soon", location: "公園", respawnAt: 100, createdAt: 2 }
+    ];
+    const board = splitBoard(timers);
+    assert.equal(board.hero.id, "soon");
+    assert.equal(board.rest[0].id, "unknown");
+    assert.deepEqual(alarmOrder(timers, 150), ["soon"]);
+    assert.deepEqual(alarmOrder(timers, 50), []);
   });
 });

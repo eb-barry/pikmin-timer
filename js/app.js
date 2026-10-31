@@ -6,19 +6,13 @@ import { loadState, saveState } from "./store.js";
 import {
   alarmOrder,
   applyReading,
-  canStart,
-  classifyDrafts,
-  describeDraft,
-  draftToRespawn,
   formatClock,
   formatCountdown,
   MAX_TIMERS,
-  meridiemLabel,
-  shiftAnchor,
+  nextTimers,
   splitBoard,
   toDateInput,
   toTimeInput,
-  toggleMeridiem,
   WAKE_WINDOW_MS
 } from "./time.js";
 
@@ -41,6 +35,7 @@ const gesture = document.getElementById("gestureHint");
 const readout = document.getElementById("reading");
 const workCover = document.getElementById("workCover");
 let readGeneration = 0;
+let noticeTimer = 0;
 
 app.style.backgroundImage = `url("${floorUrl(state.settings.floorId)}")`;
 
@@ -68,6 +63,8 @@ fileInput.addEventListener("change", () => {
 board.addEventListener("click", (event) => {
   const clock = event.target.closest(".clock");
   if (!clock) return;
+  const fromKeyboard = event.detail === 0;
+  if (!fromKeyboard && !event.target.closest(".face-hit")) return;
   if (clock.dataset.empty) {
     fileInput.click();
     return;
@@ -86,10 +83,16 @@ document.addEventListener("pointerdown", () => {
 document.addEventListener("click", onWorkCoverClick);
 workCover.addEventListener("click", hideWorkCover);
 document.addEventListener("contextmenu", (event) => {
-  if (event.target.closest(".clock, .work-cover")) event.preventDefault();
+  if (event.target.closest("input, textarea")) return;
+  event.preventDefault();
+});
+document.addEventListener("selectstart", (event) => {
+  if (event.target.closest("input, textarea")) return;
+  event.preventDefault();
 });
 document.addEventListener("dragstart", (event) => {
-  if (event.target.closest(".clock, .work-cover")) event.preventDefault();
+  if (event.target.closest("input, textarea")) return;
+  event.preventDefault();
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") tick();
@@ -126,7 +129,6 @@ function tick() {
   const now = Date.now();
   alarms.checkElapsed();
   paintBoard(now);
-  paintConfirmLive();
   paintEditLive();
   alarms.setOrder(alarmOrder(state.timers, now));
   syncWakeLock(now);
@@ -162,19 +164,37 @@ function paintBoard(now, force = false) {
 }
 
 function updateClock(element, timer, now, size) {
+  const named = timer.location.trim();
+  const timed = Number.isFinite(timer.respawnAt);
+  const place = element.querySelector("[data-part=place]");
+  const digitsEl = element.querySelector("[data-part=digits]");
+  const endEl = element.querySelector("[data-part=end]");
+  place.classList.toggle("missing", !named);
+  setText(place, named || "?");
+  if (!timed) {
+    element.classList.add("is-live");
+    element.classList.remove("is-ringing", "is-soon");
+    digitsEl.classList.add("missing");
+    endEl.classList.add("missing");
+    setText(digitsEl, "?");
+    setText(endEl, "?");
+    element.setAttribute("aria-label", `${named || "地點未辨識"}，倒數未辨識`);
+    return;
+  }
   const remaining = timer.respawnAt - now;
   const ringing = remaining <= 0;
   element.classList.toggle("is-live", true);
   element.classList.toggle("is-ringing", ringing);
   element.classList.toggle("is-soon", !ringing && remaining < 60000);
+  digitsEl.classList.remove("missing");
+  endEl.classList.remove("missing");
   const digits = ringing ? "00:00:00" : formatCountdown(remaining);
   const end = ringing ? "重生了" : formatClock(new Date(timer.respawnAt), { seconds: size === "lg" });
-  setText(element.querySelector("[data-part=digits]"), digits);
-  setText(element.querySelector("[data-part=end]"), end);
-  setText(element.querySelector("[data-part=place]"), timer.location);
+  setText(digitsEl, digits);
+  setText(endEl, end);
   element.setAttribute("aria-label", ringing
-    ? `${timer.location}，時間到，已重生`
-    : `${timer.location}，還剩 ${digits}，重生 ${end}`);
+    ? `${named || "地點未辨識"}，時間到，已重生`
+    : `${named || "地點未辨識"}，還剩 ${digits}，重生 ${end}`);
 }
 
 function setText(element, value) {
@@ -211,7 +231,7 @@ function paintAlarmChrome(alarm = { playingId: null, waitingIds: [], blocked: fa
   const playing = state.timers.find((timer) => timer.id === alarm.playingId);
   muteBtn.hidden = !playing;
   if (playing) {
-    setText(muteBtn.querySelector("[data-part=name]"), playing.location);
+    setText(muteBtn.querySelector("[data-part=name]"), playing.location.trim() || "?");
     const more = muteBtn.querySelector("[data-part=more]");
     more.hidden = alarm.waitingIds.length === 0;
     setText(more, `還有 ${alarm.waitingIds.length}`);
@@ -222,7 +242,7 @@ function paintAlarmChrome(alarm = { playingId: null, waitingIds: [], blocked: fa
   gesture.hidden = !showHint;
   if (showHint) {
     const reason = alarm.failed ? "這段響鈴沒有播放出來" : "點一下播放重生提示";
-    setText(gesture.querySelector("[data-part=text]"), `${head.location}：${reason}`);
+    setText(gesture.querySelector("[data-part=text]"), `${head.location.trim() || "這顆鬧鐘"}：${reason}`);
   }
 }
 
@@ -237,7 +257,6 @@ function receiveFiles(files) {
   const drafts = images.slice(0, MAX_TIMERS).map((file) => ({
     localId: crypto.randomUUID(),
     file,
-    previewUrl: URL.createObjectURL(file),
     location: "",
     hours: 0,
     minutes: 0,
@@ -250,10 +269,9 @@ function receiveFiles(files) {
     clockReady: false,
     locationDirty: false,
     remainingDirty: false,
-    anchorDirty: false,
-    ocrNote: "正在讀取…"
+    anchorDirty: false
   }));
-  state.reading = `正在讀取截圖…`;
+  state.reading = "正在讀取截圖…";
   paintReading();
   readDrafts(drafts, generation, extra);
 }
@@ -268,27 +286,27 @@ async function readDrafts(drafts, generation, extra) {
       const reading = await recognizeScreenshot(draft.file);
       if (generation !== readGeneration) return;
       applyReading(draft, reading, new Date());
-      const missing = [];
-      if (!draft.location) missing.push("地點");
-      if (!draft.remainingReady) missing.push("消滅時間");
-      if (!draft.clockReady) missing.push("截圖時間");
-      draft.ocrNote = missing.length ? `請補上${missing.join("、")}` : "已讀到截圖，請再看一眼";
     } catch (error) {
       console.warn(error);
       if (generation !== readGeneration) return;
-      draft.ocrNote = "讀取失敗，請對照截圖填入";
     }
   }
   if (generation !== readGeneration) return;
+  const placed = nextTimers(
+    state.timers,
+    drafts,
+    state.settings.cooldownMin * 60 * 1000,
+    Date.now(),
+    () => crypto.randomUUID()
+  );
+  state.timers = placed.timers;
+  saveState(state);
   state.reading = null;
   paintReading();
-  const classified = classifyDrafts(state.timers, drafts);
-  const complete = drafts.every((draft) => draft.location.trim() && draft.remainingReady && draft.clockReady);
-  if (complete && canStart(classified, drafts)) {
-    commitList(drafts, new Set());
-    return;
-  }
-  openConfirm(drafts, extra);
+  paintBoard(Date.now(), true);
+  alarms.setOrder(alarmOrder(state.timers, Date.now()));
+  if (placed.dropped) showNotice("已經有 6 顆鬧鐘，多出來的沒有放上去。請先刪掉一顆再上傳。");
+  else if (extra) showNotice(extra);
 }
 
 function paintReading() {
@@ -296,14 +314,18 @@ function paintReading() {
   if (state.reading) setText(readout, state.reading);
 }
 
-function openConfirm(drafts, extraNote) {
-  revokeDrafts();
-  state.sheet = { type: "confirm", drafts, extraNote, pendingRemove: new Set() };
-  renderSheet();
+function showNotice(text) {
+  window.clearTimeout(noticeTimer);
+  state.reading = text;
+  paintReading();
+  noticeTimer = window.setTimeout(() => {
+    if (state.reading !== text) return;
+    state.reading = null;
+    paintReading();
+  }, 4500);
 }
 
 function openSettings() {
-  revokeDrafts();
   state.sheet = { type: "settings" };
   renderSheet();
 }
@@ -311,20 +333,32 @@ function openSettings() {
 function openEdit(id) {
   const timer = state.timers.find((item) => item.id === id);
   if (!timer) return;
-  revokeDrafts();
+  const parts = Number.isFinite(timer.respawnAt)
+    ? splitRemaining(Math.max(0, timer.respawnAt - Date.now()))
+    : { hours: "", minutes: "", seconds: "" };
   state.sheet = {
     type: "edit",
     id,
     location: timer.location,
-    respawnAt: timer.respawnAt,
+    hours: parts.hours,
+    minutes: parts.minutes,
+    seconds: parts.seconds,
     armed: false,
     error: ""
   };
   renderSheet();
 }
 
+function splitRemaining(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return {
+    hours: String(Math.floor(total / 3600)),
+    minutes: String(Math.floor((total % 3600) / 60)),
+    seconds: String(total % 60)
+  };
+}
+
 function closeSheet() {
-  revokeDrafts();
   state.sheet = null;
   sheet.hidden = true;
   panel.innerHTML = "";
@@ -332,38 +366,15 @@ function closeSheet() {
   alarms.stopPreview();
 }
 
-function revokeDrafts() {
-  for (const draft of state.sheet?.drafts || []) URL.revokeObjectURL(draft.previewUrl);
-}
-
 function renderSheet() {
   const view = state.sheet;
   sheet.hidden = false;
   document.body.classList.add("sheet-open");
   if (view.type === "settings") panel.innerHTML = settingsMarkup();
-  if (view.type === "confirm") panel.innerHTML = confirmMarkup();
   if (view.type === "edit") panel.innerHTML = editMarkup();
   const title = panel.querySelector("#sheetTitle");
   if (title) panel.setAttribute("aria-label", title.textContent);
-  if (view.type === "confirm") {
-    paintConfirmLive();
-    alignShots();
-  }
   if (view.type === "edit") paintEditLive();
-}
-
-function alignShots() {
-  panel.querySelectorAll(".shot-wrap").forEach((wrap) => {
-    const img = wrap.querySelector("img");
-    if (!img) return;
-    const place = () => {
-      const shown = img.getBoundingClientRect().height;
-      if (!shown) return;
-      wrap.scrollTop = Math.max(0, shown * 0.44 - wrap.clientHeight * 0.15);
-    };
-    if (img.complete && img.naturalHeight) place();
-    else img.addEventListener("load", place, { once: true });
-  });
 }
 
 function settingsMarkup() {
@@ -403,143 +414,48 @@ function settingsMarkup() {
     </label>`;
 }
 
-function confirmMarkup() {
-  const view = state.sheet;
-  const cards = view.drafts.map((draft) => `
-    <article class="card" data-draft="${draft.localId}">
-      <div class="shot-wrap"><img class="shot" src="${draft.previewUrl}" alt="蘑菇截圖，可捲動核對"></div>
-      <p class="status" data-part="status"></p>
-      <label class="field">地點<input data-field="location" value="${escapeAttr(draft.location)}" autocomplete="off"></label>
-      <div class="remain-row">
-        <label>時<input data-field="hours" inputmode="numeric" value="${draft.hours}"></label>
-        <label>分<input data-field="minutes" inputmode="numeric" value="${draft.minutes}"></label>
-        <label>秒<input data-field="seconds" inputmode="numeric" value="${draft.seconds}"></label>
-      </div>
-      <label class="field">截圖日期<input data-field="date" type="date" value="${draft.anchorDate}"></label>
-      <label class="field">截圖時間<input data-field="time" type="time" value="${draft.anchorTime}"></label>
-      <div class="inline-actions">
-        <button type="button" class="mini" data-action="now">用手機現在</button>
-        <button type="button" class="mini" data-action="meridiem">${meridiemLabel(draft.anchorTime)}</button>
-        <button type="button" class="mini" data-action="shift" data-delta="-1">早 1 分</button>
-        <button type="button" class="mini" data-action="shift" data-delta="1">晚 1 分</button>
-      </div>
-      <p class="preview" data-part="preview"></p>
-      <p class="slot-note" data-part="slot"></p>
-      <div class="inline-actions"><button type="button" class="ghost" data-action="remove-draft">移除此張</button></div>
-    </article>`).join("");
-  const existing = state.timers.map((timer) => `
-    <div class="remove-row" data-existing="${timer.id}">
-      <span>${escapeText(timer.location)}</span>
-      <button type="button" class="mini" data-action="queue-remove">開始後移掉</button>
-    </div>`).join("");
-  return `
-    <div class="sheet-head"><h2 id="sheetTitle">確認重生時間</h2><button type="button" data-action="close">取消</button></div>
-    <p class="lead">消滅剩餘時間會再加 <span data-part="cool-note">${state.settings.cooldownMin}</span> 分鐘冷卻。地點用截圖上方的公園名。</p>
-    ${view.extraNote ? `<p class="slot-note warn">${escapeText(view.extraNote)}</p>` : ""}
-    <p class="slot-note" data-part="capacity"></p>
-    <div data-part="existing" ${state.timers.length ? "" : "hidden"}>${existing}</div>
-    ${cards}
-    <div class="sheet-foot"><button type="button" class="primary" data-action="start" disabled>開始倒數</button></div>`;
-}
-
 function editMarkup() {
   const view = state.sheet;
-  const when = new Date(view.respawnAt);
   return `
     <div class="sheet-head"><h2 id="sheetTitle">調整鬧鐘</h2><button type="button" data-action="close">取消</button></div>
-    <label class="field">地點<input data-field="location" value="${escapeAttr(view.location)}" autocomplete="off"></label>
-    <label class="field">重生時間<input data-field="time" type="time" value="${toTimeInput(when)}"></label>
-    <div class="inline-actions">
-      <button type="button" class="mini" data-action="shift-edit" data-delta="-1">提前 1 分</button>
-      <button type="button" class="mini" data-action="shift-edit" data-delta="1">延後 1 分</button>
+    <label class="field">地點<input data-field="location" value="${escapeAttr(view.location)}" autocomplete="off" placeholder="地點"></label>
+    <p class="section-label">剩餘時間</p>
+    <div class="remain-row">
+      <label>時<input data-field="hours" inputmode="numeric" value="${escapeAttr(view.hours)}"></label>
+      <label>分<input data-field="minutes" inputmode="numeric" value="${escapeAttr(view.minutes)}"></label>
+      <label>秒<input data-field="seconds" inputmode="numeric" value="${escapeAttr(view.seconds)}"></label>
     </div>
     <p class="preview" data-part="remain"></p>
     <p class="slot-note warn" data-part="error"></p>
-    <div class="inline-actions">
-      <button type="button" class="primary" data-action="save-edit">完成</button>
-      <button type="button" class="danger" data-action="delete-edit">刪除這顆</button>
+    <div class="edit-actions">
+      <button type="button" class="danger" data-action="delete-edit">刪除</button>
+      <button type="button" class="done" data-action="save-edit">完成</button>
     </div>`;
-}
-
-function paintConfirmLive() {
-  const view = state.sheet;
-  if (view?.type !== "confirm") return;
-  const now = new Date();
-  const cooldownMs = state.settings.cooldownMin * 60 * 1000;
-  const activeExisting = state.timers.filter((timer) => !view.pendingRemove.has(timer.id));
-  const classified = classifyDrafts(activeExisting, view.drafts);
-  view.drafts.forEach((draft, index) => {
-    const card = panel.querySelector(`[data-draft="${CSS.escape(draft.localId)}"]`);
-    if (!card) return;
-    setText(card.querySelector("[data-part=status]"), draft.ocrNote);
-    const described = describeDraft(draft, cooldownMs, now);
-    const preview = card.querySelector("[data-part=preview]");
-    if (!draft.remainingReady) {
-      setText(preview, `會加上 ${state.settings.cooldownMin} 分鐘冷卻。請先填消滅剩餘時間。`);
-    } else if (described?.past) {
-      setText(preview, `重生時間 ${described.respawnText} 已過，開始後會立刻響鈴。`);
-    } else if (described) {
-      const taken = draft.usedNow ? "截圖很接近現在，秒數用手機時間。" : "";
-      setText(preview, `重生 ${described.respawnText}，從現在起 ${described.countdownText}。${taken}`);
-    }
-    const note = classified.notes[index];
-    const slot = card.querySelector("[data-part=slot]");
-    slot.classList.toggle("warn", note === "duplicate-lost" || note === "need-location");
-    setText(slot, slotMessage(note));
-    const meridiem = card.querySelector("[data-action=meridiem]");
-    if (meridiem) setText(meridiem, meridiemLabel(draft.anchorTime));
-  });
-  const capacity = panel.querySelector("[data-part=capacity]");
-  if (capacity) {
-    setText(capacity, classified.overflow
-      ? `加上這次會有 ${classified.total} 顆，請把現有的鬧鐘標成移掉。最多 ${MAX_TIMERS} 顆。`
-      : `加上這次共 ${classified.total} 顆。`);
-  }
-  const existing = panel.querySelector("[data-part=existing]");
-  if (existing) existing.hidden = classified.overflow === 0;
-  const start = panel.querySelector("[data-action=start]");
-  if (start) {
-    start.disabled = !canStart(classified, view.drafts);
-    setText(start, `開始倒數（${view.drafts.length}）`);
-  }
-}
-
-function slotMessage(note) {
-  if (note === "replace") return "將取代正在倒數的同名地點。";
-  if (note === "duplicate-lost") return "與另一張同一地點，請移除此張。";
-  if (note === "need-location") return "請填地點。";
-  return "";
-}
-
-function fillDraftFields(draft) {
-  const card = panel.querySelector(`[data-draft="${CSS.escape(draft.localId)}"]`);
-  if (!card) return;
-  const assign = (field, value, dirty) => {
-    const input = card.querySelector(`[data-field="${field}"]`);
-    if (!input || dirty || document.activeElement === input) return;
-    input.value = value;
-  };
-  assign("location", draft.location, draft.locationDirty);
-  assign("hours", draft.hours, draft.remainingDirty);
-  assign("minutes", draft.minutes, draft.remainingDirty);
-  assign("seconds", draft.seconds, draft.remainingDirty);
-  assign("date", draft.anchorDate, draft.anchorDirty);
-  assign("time", draft.anchorTime, draft.anchorDirty);
 }
 
 function paintEditLive() {
   const view = state.sheet;
   if (view?.type !== "edit") return;
-  const remaining = view.respawnAt - Date.now();
+  const duration = durationFrom(view);
   const line = panel.querySelector("[data-part=remain]");
   if (line) {
-    setText(line, remaining <= 0
-      ? "這個時間已到，儲存後會立刻響鈴。"
-      : `還剩 ${formatCountdown(remaining)}，重生 ${formatClock(new Date(view.respawnAt))}`);
+    if (duration == null) setText(line, "還沒有剩餘時間，鬧鐘上會顯示問號。");
+    else if (duration === 0) setText(line, "這個時間已到，完成後會立刻響鈴。");
+    else setText(line, `還剩 ${formatCountdown(duration)}，結束 ${formatClock(new Date(Date.now() + duration))}`);
   }
-  const time = panel.querySelector("[data-field=time]");
-  if (time && document.activeElement !== time) time.value = toTimeInput(new Date(view.respawnAt));
   setText(panel.querySelector("[data-part=error]"), view.error || "");
+}
+
+function durationFrom(view) {
+  const fields = [view.hours, view.minutes, view.seconds].map((value) => String(value ?? "").trim());
+  if (fields.every((value) => value === "")) return null;
+  const [hours, minutes, seconds] = fields.map((value, index) => {
+    const max = index === 0 ? 99 : 59;
+    const number = Number.parseInt(value || "0", 10);
+    if (!Number.isFinite(number) || number < 0) return 0;
+    return Math.min(max, number);
+  });
+  return ((hours * 60 + minutes) * 60 + seconds) * 1000;
 }
 
 function onSheetClick(event) {
@@ -563,13 +479,6 @@ function onSheetClick(event) {
     }
   }
   if (action === "cool") changeCooldown(Number(button.dataset.delta));
-  if (action === "start") commitDrafts();
-  if (action === "remove-draft") removeDraft(button);
-  if (action === "now") useNow(button);
-  if (action === "meridiem") flipMeridiem(button);
-  if (action === "shift") shiftDraft(button, Number(button.dataset.delta));
-  if (action === "queue-remove") togglePending(button);
-  if (action === "shift-edit") shiftEdit(Number(button.dataset.delta));
   if (action === "save-edit") saveEdit();
   if (action === "delete-edit") deleteEdit(button);
 }
@@ -577,7 +486,6 @@ function onSheetClick(event) {
 function onSheetInput(event) {
   const input = event.target;
   if (!(input instanceof HTMLInputElement) || !state.sheet) return;
-  if (state.sheet.type === "confirm") updateDraftField(input);
   if (state.sheet.type === "edit") updateEditField(input);
 }
 
@@ -598,7 +506,6 @@ function onSheetChange(event) {
     saveState(state);
     if (!input.checked) hideWorkCover();
   }
-  if (state.sheet.type === "confirm") updateDraftField(input);
   if (state.sheet.type === "edit") updateEditField(input);
 }
 
@@ -618,153 +525,20 @@ function changeCooldown(delta) {
   setText(panel.querySelector("[data-part=cool]"), `${state.settings.cooldownMin} 分鐘`);
 }
 
-function draftFrom(button) {
-  const card = button.closest("[data-draft]");
-  return state.sheet?.drafts?.find((draft) => draft.localId === card?.dataset.draft) || null;
-}
-
-function updateDraftField(input) {
-  const card = input.closest("[data-draft]");
-  const draft = state.sheet.drafts.find((item) => item.localId === card?.dataset.draft);
-  if (!draft) return;
-  const field = input.dataset.field;
-  if (field === "location") {
-    draft.location = input.value;
-    draft.locationDirty = true;
-  }
-  if (field === "hours" || field === "minutes" || field === "seconds") {
-    const max = field === "hours" ? 99 : 59;
-    const number = Math.min(max, Math.max(0, Number.parseInt(input.value || "0", 10) || 0));
-    draft[field] = number;
-    draft.remainingDirty = true;
-    draft.remainingReady = true;
-  }
-  if (field === "date") {
-    draft.anchorDate = input.value;
-    draft.anchorDirty = true;
-    draft.usedNow = false;
-  }
-  if (field === "time") {
-    draft.anchorTime = input.value;
-    draft.anchorSeconds = 0;
-    draft.anchorDirty = true;
-    draft.usedNow = false;
-  }
-  paintConfirmLive();
-}
-
-function useNow(button) {
-  const draft = draftFrom(button);
-  if (!draft) return;
-  const now = new Date();
-  draft.anchorDate = toDateInput(now);
-  draft.anchorTime = toTimeInput(now);
-  draft.anchorSeconds = now.getSeconds();
-  draft.anchorDirty = true;
-  draft.usedNow = true;
-  fillDraftFields(draft);
-  paintConfirmLive();
-}
-
-function flipMeridiem(button) {
-  const draft = draftFrom(button);
-  if (!draft) return;
-  draft.anchorTime = toggleMeridiem(draft.anchorTime);
-  draft.anchorDirty = true;
-  draft.usedNow = false;
-  fillDraftFields(draft);
-  paintConfirmLive();
-}
-
-function shiftDraft(button, delta) {
-  const draft = draftFrom(button);
-  if (!draft) return;
-  Object.assign(draft, shiftAnchor(draft.anchorDate, draft.anchorTime, draft.anchorSeconds, delta));
-  draft.anchorDirty = true;
-  draft.usedNow = false;
-  fillDraftFields(draft);
-  paintConfirmLive();
-}
-
-function removeDraft(button) {
-  const draft = draftFrom(button);
-  if (!draft || state.sheet.type !== "confirm") return;
-  URL.revokeObjectURL(draft.previewUrl);
-  state.sheet.drafts = state.sheet.drafts.filter((item) => item !== draft);
-  if (!state.sheet.drafts.length) {
-    closeSheet();
-    return;
-  }
-  renderSheet();
-}
-
-function togglePending(button) {
-  const row = button.closest("[data-existing]");
-  const id = row?.dataset.existing;
-  if (!id || state.sheet.type !== "confirm") return;
-  if (state.sheet.pendingRemove.has(id)) {
-    state.sheet.pendingRemove.delete(id);
-    row.classList.remove("is-pending");
-    button.textContent = "開始後移掉";
-  } else {
-    state.sheet.pendingRemove.add(id);
-    row.classList.add("is-pending");
-    button.textContent = "取消移掉";
-  }
-  paintConfirmLive();
-}
-
-function commitDrafts() {
-  const view = state.sheet;
-  if (view?.type !== "confirm") return;
-  commitList(view.drafts, view.pendingRemove);
-}
-
-function commitList(drafts, pendingRemove) {
-  const cooldownMs = state.settings.cooldownMin * 60 * 1000;
-  let timers = state.timers.filter((timer) => !pendingRemove.has(timer.id));
-  const classified = classifyDrafts(timers, drafts);
-  if (!canStart(classified, drafts)) return;
-  drafts.forEach((draft, index) => {
-    const note = classified.notes[index];
-    if (note === "duplicate-lost" || note === "need-location") return;
-    const respawn = draftToRespawn(draft, cooldownMs);
-    if (!respawn) return;
-    const location = draft.location.trim();
-    timers = timers.filter((timer) => timer.location.trim() !== location);
-    timers.push({
-      id: crypto.randomUUID(),
-      location,
-      respawnAt: respawn.getTime(),
-      createdAt: Date.now() + index
-    });
-  });
-  state.timers = timers;
-  saveState(state);
-  for (const draft of drafts) URL.revokeObjectURL(draft.previewUrl);
-  if (state.sheet?.type === "confirm") closeSheet();
-  paintBoard(Date.now(), true);
-  alarms.setOrder(alarmOrder(state.timers, Date.now()));
-}
-
 function updateEditField(input) {
   const view = state.sheet;
   if (view.type !== "edit") return;
   view.error = "";
-  if (input.dataset.field === "location") view.location = input.value;
-  if (input.dataset.field === "time") {
-    const current = new Date(view.respawnAt);
-    const [hours, minutes] = input.value.split(":").map(Number);
-    const next = new Date(current.getFullYear(), current.getMonth(), current.getDate(), hours, minutes, current.getSeconds(), 0);
-    if (!Number.isNaN(next.getTime())) view.respawnAt = next.getTime();
+  view.armed = false;
+  const field = input.dataset.field;
+  if (field === "location") view.location = input.value;
+  if (field === "hours" || field === "minutes" || field === "seconds") {
+    const digits = input.value.replace(/\D/g, "").slice(0, 2);
+    view[field] = digits;
+    if (input.value !== digits) input.value = digits;
   }
-  paintEditLive();
-}
-
-function shiftEdit(delta) {
-  if (state.sheet?.type !== "edit") return;
-  state.sheet.respawnAt += delta * 60 * 1000;
-  state.sheet.error = "";
+  const again = panel.querySelector("[data-action=delete-edit]");
+  if (again) again.textContent = "刪除";
   paintEditLive();
 }
 
@@ -772,12 +546,7 @@ function saveEdit() {
   const view = state.sheet;
   if (view?.type !== "edit") return;
   const location = view.location.trim();
-  if (!location) {
-    view.error = "請填地點。";
-    paintEditLive();
-    return;
-  }
-  if (state.timers.some((timer) => timer.id !== view.id && timer.location.trim() === location)) {
+  if (location && state.timers.some((timer) => timer.id !== view.id && timer.location.trim() === location)) {
     view.error = "已有這個地點。";
     paintEditLive();
     return;
@@ -787,8 +556,9 @@ function saveEdit() {
     closeSheet();
     return;
   }
+  const duration = durationFrom(view);
   timer.location = location;
-  timer.respawnAt = view.respawnAt;
+  timer.respawnAt = duration == null ? null : Date.now() + duration;
   saveState(state);
   closeSheet();
   paintBoard(Date.now(), true);
@@ -800,7 +570,7 @@ function deleteEdit(button) {
   if (view?.type !== "edit") return;
   if (!view.armed) {
     view.armed = true;
-    button.textContent = "再按一次就刪除";
+    button.textContent = "再按一次";
     return;
   }
   state.timers = state.timers.filter((timer) => timer.id !== view.id);
@@ -814,7 +584,7 @@ let wakeSentinel = null;
 
 async function syncWakeLock(now) {
   const nearest = state.timers
-    .filter((timer) => timer.respawnAt > now)
+    .filter((timer) => Number.isFinite(timer.respawnAt) && timer.respawnAt > now)
     .sort((a, b) => a.respawnAt - b.respawnAt)[0];
   const want = state.settings.keepAwake
     && document.visibilityState === "visible"
@@ -837,6 +607,3 @@ function escapeAttr(value) {
   return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
-function escapeText(value) {
-  return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-}

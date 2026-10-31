@@ -13,6 +13,32 @@
 html, body {
   margin: 0;
   min-height: 100%;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+img, svg, button {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.app ::selection {
+  background: transparent;
+}
+
+input::selection,
+textarea::selection {
+  background: #b7e4c7;
 }
 
 body {
@@ -208,6 +234,16 @@ button, input {
   pointer-events: none;
 }
 
+.face-hit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 100%;
+  padding: 6px 8px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 .place {
   display: flex;
   align-items: center;
@@ -265,6 +301,10 @@ button, input {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
+}
+
+.missing {
+  color: #d23b3b;
 }
 
 .clock-lg .place { font-size: clamp(16px, 4.4vw, 22px); }
@@ -401,11 +441,37 @@ button, input {
   cursor: pointer;
 }
 
-.danger {
-  background: #fff;
-  color: #8d1d1d;
-  border: 1px solid #f0c8c8;
-  width: 100%;
+.edit-actions {
+  display: grid;
+  grid-template-columns: 1fr 3fr;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.edit-actions .danger,
+.edit-actions .done {
+  min-height: 52px;
+  border: 0;
+  border-radius: 14px;
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.edit-actions .danger {
+  flex: 1;
+  width: auto;
+  padding: 0 4px;
+  background: #d23b3b;
+  color: #fff;
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.edit-actions .done {
+  flex: 3;
+  background: #148a45;
+  color: #fff;
 }
 
 .lead, .hint, .status, .preview, .slot-note {

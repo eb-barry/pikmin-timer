@@ -110,8 +110,18 @@ export function shiftAnchor(dateStr, timeStr, seconds, deltaMinutes) {
   };
 }
 
+export function hasInstant(timer) {
+  return Number.isFinite(timer?.respawnAt);
+}
+
 export function sortTimers(timers) {
-  return [...timers].sort((a, b) => a.respawnAt - b.respawnAt || a.createdAt - b.createdAt);
+  return [...timers].sort((a, b) => {
+    const aKnown = hasInstant(a);
+    const bKnown = hasInstant(b);
+    if (aKnown !== bKnown) return aKnown ? -1 : 1;
+    if (aKnown && a.respawnAt !== b.respawnAt) return a.respawnAt - b.respawnAt;
+    return (a.createdAt || 0) - (b.createdAt || 0);
+  });
 }
 
 export function splitBoard(timers) {
@@ -121,40 +131,44 @@ export function splitBoard(timers) {
 }
 
 export function alarmOrder(timers, now) {
-  return sortTimers(timers).filter((timer) => timer.respawnAt <= now).map((timer) => timer.id);
+  return sortTimers(timers)
+    .filter((timer) => hasInstant(timer) && timer.respawnAt <= now)
+    .map((timer) => timer.id);
 }
 
-export function classifyDrafts(existing, drafts) {
-  const lastIndex = new Map();
+function instantOf(draft, cooldownMs) {
+  if (!draft.remainingReady) return null;
+  const respawn = draftToRespawn(draft, cooldownMs);
+  if (!respawn || Number.isNaN(respawn.getTime())) return null;
+  return respawn.getTime();
+}
+
+export function nextTimers(existing, drafts, cooldownMs, now, idFor = () => "") {
+  const timers = existing.map((timer) => ({ ...timer }));
+  let dropped = 0;
   drafts.forEach((draft, index) => {
-    const key = draft.location.trim();
-    if (key) lastIndex.set(key, index);
+    const location = String(draft.location || "").trim();
+    const instant = instantOf(draft, cooldownMs);
+    if (location) {
+      const found = timers.find((timer) => timer.location.trim() === location);
+      if (found) {
+        found.location = location;
+        if (instant != null) found.respawnAt = instant;
+        return;
+      }
+    }
+    if (timers.length >= MAX_TIMERS) {
+      dropped += 1;
+      return;
+    }
+    timers.push({
+      id: idFor(index),
+      location,
+      respawnAt: instant,
+      createdAt: now + index
+    });
   });
-  const notes = drafts.map((draft, index) => {
-    const key = draft.location.trim();
-    if (!key) return "need-location";
-    if (lastIndex.get(key) !== index) return "duplicate-lost";
-    if (existing.some((timer) => timer.location.trim() === key)) return "replace";
-    return "add";
-  });
-  const names = new Set(existing.map((timer) => timer.location.trim()).filter(Boolean));
-  for (const draft of drafts) {
-    const key = draft.location.trim();
-    if (key) names.add(key);
-  }
-  const empties = drafts.filter((draft) => !draft.location.trim()).length;
-  const total = names.size + empties;
-  return {
-    notes,
-    total,
-    overflow: Math.max(0, total - MAX_TIMERS)
-  };
-}
-
-export function canStart(classification, drafts) {
-  if (!drafts.length || classification.overflow > 0) return false;
-  if (classification.notes.some((note) => note === "need-location" || note === "duplicate-lost")) return false;
-  return drafts.every((draft) => draft.remainingReady);
+  return { timers, dropped };
 }
 
 export function applyReading(draft, reading, now) {

@@ -4,6 +4,7 @@ import { createAlarms, unlockAudio } from "./audio.js";
 import { recognizeScreenshot } from "./ocr.js";
 import { loadState, saveState } from "./store.js";
 import {
+  pendingTimers,
   ringableOrder,
   applyReading,
   formatClock,
@@ -148,6 +149,7 @@ function playableOrder(now) {
   return ringableOrder(state.timers, now, seenAhead);
 }
 
+retireRespawned(Date.now());
 paintBoard(Date.now(), true);
 alarms.setOrder(playableOrder(Date.now()));
 schedule();
@@ -165,9 +167,22 @@ function schedule() {
   }, 1000 - (Date.now() % 1000) + 20);
 }
 
+function retireRespawned(now) {
+  const kept = pendingTimers(state.timers, now);
+  if (kept.length === state.timers.length) return;
+  const ids = new Set(kept.map((timer) => timer.id));
+  state.timers.forEach((timer) => {
+    if (!ids.has(timer.id)) seenAhead.delete(timer.id);
+  });
+  state.timers = kept;
+  saveState(state);
+  if (state.sheet?.type === "edit" && !ids.has(state.sheet.id)) closeSheet();
+}
+
 function tick() {
   const now = Date.now();
   alarms.checkElapsed();
+  retireRespawned(now);
   paintBoard(now);
   paintEditLive();
   alarms.setOrder(playableOrder(now));

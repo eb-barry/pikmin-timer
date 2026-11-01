@@ -307,8 +307,10 @@ function enlargeLine(canvas, trim, useTextLine = true) {
 // Every slot is a fraction of the screenshot being read, so a taller or shorter phone
 // uses the same layout. Measured on every game screen we have, the fractions match:
 // place name 9.5%–11.2% of the height, hit points 42.2%–45.6%, countdown 45.9%–47.0%.
-// The line height stays fixed. The width grows with the number of characters, so the
-// countdown box stops at the first wide gap after the white text.
+// The line height stays fixed. The width grows with the number of characters.
+// A short line can sit only a few pixels from a daisy. Those flowers hang outside
+// the glyph line, so they are dropped before the text is read. A gap wider than
+// 4.5% of the screen still ends the box.
 const CLOCK_BAND = { x: 0, y: 0, w: 0.28, h: 0.07 };
 const PLACE_BAND = { x: 0.08, y: 0.088, w: 0.84, h: 0.04 };
 const COUNTDOWN_BAND = { x: 0.012, y: 0.4568, w: 0.72, h: 0.0165 };
@@ -392,10 +394,103 @@ function closeStrokes(canvas) {
   return canvas;
 }
 
+function percentile(values, fraction) {
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.floor(fraction * (sorted.length - 1))];
+}
+
+// Daisies in this slot are taller than the countdown glyphs and hang below the line.
+// A short "剩下" line has no wide gap before the first flower, so the width rule keeps
+// the flower, and a digit whitelist then turns the petals into extra numbers.
+function clipCountdown(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const { width, height } = canvas;
+  const image = context.getImageData(0, 0, width, height);
+  const data = image.data;
+  const columns = [];
+  for (let x = 0; x < width; x += 1) {
+    const rows = [];
+    for (let y = 0; y < height; y += 1) {
+      if (data[(y * width + x) * 4] < 80) rows.push(y);
+    }
+    columns.push(rows);
+  }
+  const gapLimit = Math.max(3, Math.round(height * 0.12));
+  const runs = [];
+  let start = -1;
+  let gap = 0;
+  const close = (end) => {
+    if (start < 0) return;
+    runs.push([start, end]);
+    start = -1;
+  };
+  columns.forEach((rows, x) => {
+    if (rows.length) {
+      if (start < 0) start = x;
+      gap = 0;
+    } else if (start >= 0) {
+      gap += 1;
+      if (gap > gapLimit) close(x - gap);
+    }
+  });
+  close(width - 1);
+  const comps = runs.map(([from, to]) => {
+    const tops = [];
+    const bots = [];
+    let ink = 0;
+    for (let x = from; x <= to; x += 1) {
+      const rows = columns[x];
+      if (!rows.length) continue;
+      tops.push(rows[0]);
+      bots.push(rows[rows.length - 1]);
+      ink += rows.length;
+    }
+    return {
+      from,
+      to,
+      ink,
+      tops,
+      bots,
+      w: to - from + 1,
+      h: tops.length ? Math.max(...bots) - Math.min(...tops) + 1 : 0
+    };
+  }).filter((comp) => comp.tops.length);
+  if (!comps.length) return canvas;
+  const left = comps.filter((comp) => comp.from < width * 0.45 && comp.w >= 8 && comp.h >= height * 0.35);
+  const main = (left.length ? left : comps).reduce((best, comp) => (comp.ink > best.ink ? comp : best));
+  const base = percentile(main.bots, 0.85);
+  const top = percentile(main.tops, 0.15);
+  const line = Math.max(8, base - top);
+  const slack = Math.max(2, Math.round(line * 0.18));
+  const specks = [];
+  let flowerAt = width;
+  comps.forEach((comp) => {
+    const below = comp.bots.filter((value) => value > base + slack).length / comp.bots.length;
+    const above = comp.tops.filter((value) => value < top - slack).length / comp.tops.length;
+    const speck = comp.h < line * 0.55 && comp.w < main.w * 0.45 && comp.to <= main.from + 2;
+    const flower = comp.from > main.to && comp.w >= 6 && comp.h >= line * 0.9 && (below > 0.22 || above > 0.22);
+    if (speck) specks.push(comp);
+    if (flower) flowerAt = Math.min(flowerAt, comp.from);
+  });
+  specks.forEach((comp) => {
+    for (let x = comp.from; x <= comp.to; x += 1) {
+      for (let y = 0; y < height; y += 1) {
+        const index = (y * width + x) * 4;
+        data[index] = 255;
+        data[index + 1] = 255;
+        data[index + 2] = 255;
+      }
+    }
+  });
+  context.putImageData(image, 0, 0);
+  if (flowerAt >= width - 1) return canvas;
+  return crop(canvas, 0, 0, Math.max(8, flowerAt), height, 1);
+}
+
 function maskedCountdown(native) {
   const strict = recolor(copyCanvas(native), isWhiteInk);
   const masked = inkCount(strict) >= 40 ? strict : recolor(native, isCountdownInk);
-  const line = enlargeLine(closeStrokes(masked), (image) => image, false);
+  const line = enlargeLine(clipCountdown(closeStrokes(masked)), (image) => image, false);
   return inkCount(line.big) >= 30 ? line : null;
 }
 

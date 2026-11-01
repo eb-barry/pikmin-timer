@@ -83,7 +83,10 @@ document.addEventListener("pointerdown", () => {
   if (alarms.needsGesture()) alarms.playFromGesture();
 });
 document.addEventListener("click", onWorkCoverClick);
-workCover.addEventListener("click", hideWorkCover);
+workCover.addEventListener("click", (event) => {
+  event.stopPropagation();
+  hideWorkCover();
+});
 document.addEventListener("contextmenu", (event) => {
   if (event.target.closest("input, textarea")) return;
   event.preventDefault();
@@ -105,7 +108,14 @@ document.addEventListener("visibilitychange", () => {
 
 function onWorkCoverClick(event) {
   if (!state.settings.workMode || !state.timers.length || state.sheet || !workCover.hidden) return;
-  if (event.target.closest(".clock, button, a, input, label, .sheet, .gesture")) return;
+  // Keyboard activation of a clock opens the editor. A pointer tap on the words does too.
+  // Every other tap on the main screen covers it with the work picture.
+  if (event.detail === 0) return;
+  const blocked = event.composedPath().some((node) => (
+    node instanceof Element
+    && node.matches(".face-hit, .top-actions, .mute-btn, .work-cover, a, input, label, .sheet, .gesture")
+  ));
+  if (blocked) return;
   workCover.hidden = false;
 }
 
@@ -435,7 +445,7 @@ function settingsMarkup() {
     </div>
     <p class="hint">加在蘑菇消滅剩餘時間後面。已經在倒數的鬧鐘不會改。5 分鐘時秒數固定為 0。</p>
     <label class="switch-row">
-      <span><span class="sound-name">工作模式</span><span class="hint">倒數進行中，點鬧鐘以外的畫面會蓋上工作畫面。再點一下就回來。</span></span>
+      <span><span class="sound-name">工作模式</span><span class="hint">倒數進行中，點文字會調整鬧鐘。點文字以外的畫面會蓋上工作圖片。再點一下就回來。</span></span>
       <input id="workMode" type="checkbox" ${settings.workMode ? "checked" : ""}>
     </label>
     <label class="switch-row">
@@ -489,6 +499,7 @@ function durationFrom(view) {
 }
 
 function onSheetClick(event) {
+  event.stopPropagation();
   if (event.target === sheet) {
     closeSheet();
     return;

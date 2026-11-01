@@ -55,5 +55,8 @@ describe("destruction time", () => {
     assert.equal(readPlace("巨大 萬聖節蘑菇"), "");
     assert.equal(readPlace("土銀花埔。"), "土銀花埔");
     assert.equal(readPlace("TERESA"), "");
+    assert.deepEqual(parseRemaining("644,051剩下1小時26分21秒"), { hours: 1, minutes: 26, seconds: 21 });
+    assert.deepEqual(parseRemaining("血量 405625 剩下31分06秒"), { hours: 0, minutes: 31, seconds: 6 });
+    assert.equal(parseRemaining("644,051"), null);
   });
 });

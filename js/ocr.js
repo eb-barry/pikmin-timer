@@ -74,29 +74,6 @@ async function readText(worker, canvas, mode, whitelist = "", dpi = 300) {
   return data.text || "";
 }
 
-function findSheetTop(canvas) {
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  const { width, height } = canvas;
-  const data = context.getImageData(0, 0, width, height).data;
-  const samples = 36;
-  let run = 0;
-  for (let y = Math.floor(height * 0.28); y < Math.floor(height * 0.78); y += 1) {
-    let white = 0;
-    for (let index = 0; index < samples; index += 1) {
-      const x = Math.floor(((index + 0.5) / samples) * width);
-      const pixel = (y * width + x) * 4;
-      if (data[pixel] > 236 && data[pixel + 1] > 236 && data[pixel + 2] > 236) white += 1;
-    }
-    if (white >= samples * 0.7) {
-      run += 1;
-      if (run >= 4) return y - 3;
-    } else {
-      run = 0;
-    }
-  }
-  return null;
-}
-
 function isLightInk(red, green, blue) {
   const max = Math.max(red, green, blue);
   const min = Math.min(red, green, blue);
@@ -327,143 +304,110 @@ function enlargeLine(canvas, trim, useTextLine = true) {
   return { half: downsample(big, 0.5), big };
 }
 
-function placeImage(full) {
-  const native = recolor(
-    crop(full, full.width * 0.08, full.height * 0.078, full.width * 0.84, full.height * 0.072, 1),
-    isPlaceInk
+// Every slot is a fraction of the screenshot being read, so a taller or shorter phone
+// uses the same layout. Measured on every game screen we have, the fractions match:
+// place name 9.5%–11.2% of the height, hit points 42.2%–45.6%, countdown 45.9%–47.0%.
+// The line height stays fixed. The width grows with the number of characters, so the
+// countdown box stops at the first wide gap after the white text.
+const CLOCK_BAND = { x: 0, y: 0, w: 0.28, h: 0.07 };
+const PLACE_BAND = { x: 0.08, y: 0.088, w: 0.84, h: 0.04 };
+const COUNTDOWN_BAND = { x: 0.012, y: 0.4568, w: 0.72, h: 0.0165 };
+
+function fractionCrop(full, band) {
+  return crop(
+    full,
+    full.width * band.x,
+    full.height * band.y,
+    full.width * band.w,
+    full.height * band.h,
+    1
   );
+}
+
+function placeImage(full) {
+  const native = recolor(fractionCrop(full, PLACE_BAND), isPlaceInk);
   return enlargeLine(native, trimAfterText);
 }
 
-function countdownSpan(full) {
-  const sheet = findSheetTop(full);
+function countdownWidth(full) {
   const { width, height } = full;
-  const anchor = sheet == null ? height * 0.5 : sheet;
-  const top = Math.max(0, Math.floor(anchor - height * 0.062));
-  const bottom = Math.min(height - 1, Math.floor(anchor - height * 0.016));
   const context = full.getContext("2d", { willReadFrequently: true });
   const data = context.getImageData(0, 0, width, height).data;
-  const measure = (portion) => {
-    const x0 = Math.floor(width * 0.012);
-    const xEnd = Math.floor(width * portion);
-    const rows = [];
-    for (let y = top; y <= bottom; y += 1) {
-      let ink = 0;
-      let first = xEnd;
-      let last = 0;
-      for (let x = x0; x < xEnd; x += 1) {
-        const pixel = (y * width + x) * 4;
-        if (isWhiteInk(data[pixel], data[pixel + 1], data[pixel + 2])) {
-          ink += 1;
-          if (x < first) first = x;
-          if (x > last) last = x;
+  const y0 = Math.floor(height * COUNTDOWN_BAND.y);
+  const y1 = Math.min(height - 1, Math.floor(height * (COUNTDOWN_BAND.y + COUNTDOWN_BAND.h)));
+  const x0 = Math.floor(width * COUNTDOWN_BAND.x);
+  const limit = Math.floor(width * (COUNTDOWN_BAND.x + COUNTDOWN_BAND.w));
+  const gapLimit = Math.max(40, Math.round(width * 0.045));
+  let last = x0;
+  let gap = 0;
+  let seen = false;
+  for (let x = x0; x < limit; x += 1) {
+    let ink = 0;
+    for (let y = y0; y <= y1; y += 1) {
+      const pixel = (y * width + x) * 4;
+      const red = data[pixel];
+      const green = data[pixel + 1];
+      const blue = data[pixel + 2];
+      if (Math.min(red, green, blue) >= 200 && Math.max(red, green, blue) - Math.min(red, green, blue) < 40) ink += 1;
+    }
+    if (ink >= 2) {
+      seen = true;
+      gap = 0;
+      last = x;
+    } else if (seen) {
+      gap += 1;
+      if (gap > gapLimit) break;
+    }
+  }
+  return Math.max(width * 0.2, Math.min(width * COUNTDOWN_BAND.w, last + width * 0.02 - x0));
+}
+
+// The white-ink mask is the contrast step: game text becomes solid black and the
+// meadow becomes white. One pixel of closing joins a stroke that would otherwise break.
+function closeStrokes(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const { width, height } = canvas;
+  const image = context.getImageData(0, 0, width, height);
+  const source = new Uint8ClampedArray(image.data);
+  const data = image.data;
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      let ink = false;
+      for (let dy = -1; dy <= 1 && !ink; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (source[((y + dy) * width + (x + dx)) * 4] < 80) {
+            ink = true;
+            break;
+          }
         }
       }
-      rows.push({ ink, span: last > first ? last - first : 0 });
+      const index = (y * width + x) * 4;
+      const value = ink ? 0 : 255;
+      data[index] = value;
+      data[index + 1] = value;
+      data[index + 2] = value;
     }
-    return rows;
-  };
-  const collect = (rows, gate) => {
-    const found = [];
-    let start = -1;
-    let sum = 0;
-    let span = 0;
-    const close = (end) => {
-      if (start < 0) return;
-      const band = end - start + 1;
-      if (band >= 8 && band <= height * 0.028 && sum >= 80 && span >= 70) {
-        found.push({ start: top + start, end: top + end, sum, span });
-      }
-      start = -1;
-      sum = 0;
-      span = 0;
-    };
-    rows.forEach((row, index) => {
-      if (row.ink >= gate) {
-        if (start < 0) start = index;
-        sum += row.ink;
-        span = Math.max(span, row.span);
-      } else {
-        close(index - 1);
-      }
-    });
-    close(rows.length - 1);
-    return found;
-  };
-  // The wide strip often glues the hit-point digits to the countdown, because flowers fill the gap.
-  // The countdown itself is the lower line, and that gap stays open on its left side.
-  let clusters = collect(measure(0.58), 8);
-  let split = false;
-  if (!clusters.length) {
-    split = true;
-    const left = measure(0.28);
-    clusters = collect(left, 8);
-    if (!clusters.length) clusters = collect(left, 18);
   }
-  const lower = clusters.filter((cluster) => cluster.start >= top + (bottom - top) * 0.45);
-  if (!lower.length) return null;
-  const chosen = lower.reduce((best, cluster) => (cluster.end > best.end ? cluster : best));
-  const margin = 4;
-  const y = Math.max(0, chosen.start - margin);
-  let x = width * 0.008;
-  let w = width * 0.7;
-  if (split) {
-    const gapLimit = Math.max(40, Math.round(width * 0.045));
-    let last = Math.floor(width * 0.012);
-    let gap = 0;
-    let seen = false;
-    const limit = Math.floor(width * 0.75);
-    for (let px = last; px < limit; px += 1) {
-      let ink = 0;
-      for (let row = chosen.start; row <= chosen.end; row += 1) {
-        const pixel = (row * width + px) * 4;
-        if (isWhiteInk(data[pixel], data[pixel + 1], data[pixel + 2])) ink += 1;
-      }
-      if (ink >= 2) {
-        seen = true;
-        gap = 0;
-        last = px;
-      } else if (seen) {
-        gap += 1;
-        if (gap > gapLimit) break;
-      }
-    }
-    w = Math.max(width * 0.22, Math.min(width - x, last + Math.round(width * 0.02) - x));
-  }
-  return {
-    x,
-    y,
-    w,
-    h: Math.min(height - y, chosen.end - chosen.start + 1 + margin * 2)
-  };
+  context.putImageData(image, 0, 0);
+  return canvas;
 }
 
 function maskedCountdown(native) {
   const strict = recolor(copyCanvas(native), isWhiteInk);
   const masked = inkCount(strict) >= 40 ? strict : recolor(native, isCountdownInk);
-  const line = enlargeLine(masked, (image) => image, false);
+  const line = enlargeLine(closeStrokes(masked), (image) => image, false);
   return inkCount(line.big) >= 30 ? line : null;
 }
 
 function countdownBands(full) {
-  const images = [];
-  const span = countdownSpan(full);
-  if (span) {
-    const line = maskedCountdown(crop(full, span.x, span.y, span.w, span.h, 1));
-    if (line) images.push(line);
-  }
-  const sheet = findSheetTop(full);
-  const anchor = sheet == null ? full.height * 0.488 : sheet;
-  const fallback = maskedCountdown(crop(
-    full,
-    0,
-    Math.max(0, anchor - full.height * 0.03),
-    full.width * 0.62,
-    Math.max(18, full.height * 0.022),
-    1
-  ));
-  if (fallback) images.push(fallback);
-  return images;
+  const band = {
+    x: COUNTDOWN_BAND.x,
+    y: COUNTDOWN_BAND.y,
+    w: countdownWidth(full) / full.width,
+    h: COUNTDOWN_BAND.h
+  };
+  const line = maskedCountdown(fractionCrop(full, band));
+  return line ? [line] : [];
 }
 
 function acceptRemaining(text) {
@@ -472,6 +416,9 @@ function acceptRemaining(text) {
 }
 
 async function readCountdown(worker, images) {
+  const listedHalf = await readText(worker, images.half, "7", "剩下小時分秒0123456789", 300);
+  const fromListedHalf = parseRemaining(listedHalf);
+  if (fromListedHalf) return fromListedHalf;
   const halfOpen = await readText(worker, images.half, "13", "", 96);
   const fromHalf = acceptRemaining(halfOpen);
   if (fromHalf) return fromHalf;
@@ -498,20 +445,13 @@ function pickClock(texts) {
 export async function recognizeScreenshot(source) {
   const worker = await getWorker();
   const full = await loadCanvas(source);
-  const width = full.width;
-  const height = full.height;
 
-  // The phone clock is the leftmost status time. A center pill can show a second time, which is not the screenshot clock.
-  const status = crop(full, 0, 0, width * 0.26, height * 0.06, 4);
+  // The phone clock is the leftmost status time. Its box stays left of the center pill,
+  // which can show a second time. The box is a fraction of this screenshot.
+  const status = scaleCanvas(fractionCrop(full, CLOCK_BAND), 3, true);
   const lightTime = await readText(worker, pad(recolor(copyCanvas(status), isLightInk)), "7", "0123456789:");
   const darkTime = await readText(worker, pad(recolor(status, isDarkInk)), "7", "0123456789:");
-  let clock = pickClock([lightTime, darkTime]);
-  if (!clock) {
-    const wideStatus = crop(full, 0, 0, width * 0.5, height * 0.07, 3);
-    const wideLight = await readText(worker, pad(recolor(copyCanvas(wideStatus), isLightInk)), "7", "0123456789:");
-    const wideDark = await readText(worker, pad(recolor(wideStatus, isDarkInk)), "7", "0123456789:");
-    clock = pickClock([wideLight, wideDark]);
-  }
+  const clock = pickClock([lightTime, darkTime]);
   const place = placeImage(full);
   const placeText = await readText(worker, place.half, "13", "", 96);
   let location = readPlace(placeText);

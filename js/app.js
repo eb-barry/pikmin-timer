@@ -4,7 +4,7 @@ import { createAlarms, unlockAudio } from "./audio.js";
 import { recognizeScreenshot } from "./ocr.js";
 import { loadState, saveState } from "./store.js";
 import {
-  alarmOrder,
+  ringableOrder,
   applyReading,
   formatClock,
   formatCountdown,
@@ -46,7 +46,7 @@ const alarms = createAlarms({
     state.timers = state.timers.filter((timer) => timer.id !== id);
     saveState(state);
     paintBoard(Date.now(), true);
-    alarms.setOrder(alarmOrder(state.timers, Date.now()));
+    alarms.setOrder(playableOrder(Date.now()));
   },
   onChange: paintAlarmChrome
 });
@@ -97,7 +97,10 @@ document.addEventListener("dragstart", (event) => {
   event.preventDefault();
 });
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") tick();
+  if (document.visibilityState !== "visible") return;
+  // Coming back is a new look. A mushroom that respawned while we were away stays quiet.
+  arrive(Date.now());
+  tick();
 });
 
 function onWorkCoverClick(event) {
@@ -110,8 +113,33 @@ function hideWorkCover() {
   workCover.hidden = true;
 }
 
+// Seen-ahead ids are mushrooms whose respawn was still in the future while this
+// page was on screen. Entry, and a gap long enough that we were not watching,
+// forgets that list except for a ring that is already playing.
+const SEEN_AHEAD_GAP_MS = 60 * 1000;
+const seenAhead = new Set();
+let lastSeenAt = 0;
+
+function arrive(now) {
+  const playing = alarms.playingId();
+  seenAhead.clear();
+  if (playing) seenAhead.add(playing);
+  lastSeenAt = now;
+}
+
+function playableOrder(now) {
+  const playing = alarms.playingId();
+  if (document.visibilityState !== "visible") return playing ? [playing] : [];
+  if (!lastSeenAt || now - lastSeenAt > SEEN_AHEAD_GAP_MS) arrive(now);
+  state.timers.forEach((timer) => {
+    if (Number.isFinite(timer.respawnAt) && timer.respawnAt > now) seenAhead.add(timer.id);
+  });
+  lastSeenAt = now;
+  return ringableOrder(state.timers, now, seenAhead);
+}
+
 paintBoard(Date.now(), true);
-alarms.setOrder(alarmOrder(state.timers, Date.now()));
+alarms.setOrder(playableOrder(Date.now()));
 schedule();
 
 if ("serviceWorker" in navigator) {
@@ -132,7 +160,7 @@ function tick() {
   alarms.checkElapsed();
   paintBoard(now);
   paintEditLive();
-  alarms.setOrder(alarmOrder(state.timers, now));
+  alarms.setOrder(playableOrder(now));
   syncWakeLock(now);
 }
 
@@ -298,7 +326,7 @@ async function readDrafts(drafts, generation, extra) {
   state.reading = null;
   paintReading();
   paintBoard(Date.now(), true);
-  alarms.setOrder(alarmOrder(state.timers, Date.now()));
+  alarms.setOrder(playableOrder(Date.now()));
   if (placed.dropped) showNotice(`已經有 ${MAX_TIMERS} 顆鬧鐘，多出來的沒有放上去。請先刪掉一顆再上傳。`);
   else if (extra) showNotice(extra);
 }
@@ -579,7 +607,7 @@ function saveEdit() {
   saveState(state);
   closeSheet();
   paintBoard(Date.now(), true);
-  alarms.setOrder(alarmOrder(state.timers, Date.now()));
+  alarms.setOrder(playableOrder(Date.now()));
 }
 
 function deleteEdit(button) {
@@ -594,7 +622,7 @@ function deleteEdit(button) {
   saveState(state);
   closeSheet();
   paintBoard(Date.now(), true);
-  alarms.setOrder(alarmOrder(state.timers, Date.now()));
+  alarms.setOrder(playableOrder(Date.now()));
 }
 
 let wakeSentinel = null;

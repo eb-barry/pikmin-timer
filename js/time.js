@@ -152,6 +152,13 @@ export function alarmOrder(timers, now) {
     .map((timer) => timer.id);
 }
 
+// A due clock rings only if this visit already saw it still in the future.
+// Opening the app after the mushroom has respawned does not catch up.
+export function ringableOrder(timers, now, seenAhead) {
+  const seen = new Set(seenAhead);
+  return alarmOrder(timers, now).filter((id) => seen.has(id));
+}
+
 function instantOf(draft, cooldownMs) {
   if (!draft.remainingReady) return null;
   const respawn = draftToRespawn(draft, cooldownMs);

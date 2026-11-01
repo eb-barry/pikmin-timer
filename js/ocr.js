@@ -657,6 +657,16 @@ function maskedCountdown(native) {
   return inkCount(line.big) >= 30 ? line : null;
 }
 
+// On a bright meadow the strict white mask leaves 剩 thin enough that smoothing
+// turns it into a shape the reader rejects, and the hour disappears with it.
+// The same line, kept sharp and taken with the wider countdown ink, still reads.
+// This pass is used only after the strict line does not parse.
+function sharpCountdown(native) {
+  const masked = recolor(copyCanvas(native), isCountdownInk);
+  if (inkCount(masked) < 40) return null;
+  return pad(scaleCanvas(clipCountdown(masked), 3, false), 28);
+}
+
 function countdownBands(full) {
   const band = {
     x: COUNTDOWN_BAND.x,
@@ -664,8 +674,15 @@ function countdownBands(full) {
     w: countdownWidth(full) / full.width,
     h: COUNTDOWN_BAND.h
   };
-  const line = maskedCountdown(fractionCrop(full, band));
-  return line ? [line] : [];
+  const native = fractionCrop(full, band);
+  const line = maskedCountdown(native);
+  const soft = sharpCountdown(native);
+  if (!line && !soft) return [];
+  return [{
+    half: line?.half || soft,
+    big: line?.big || soft,
+    soft
+  }];
 }
 
 function acceptRemaining(text) {
@@ -686,6 +703,11 @@ async function readCountdown(worker, images) {
   const listed = await readText(worker, images.big, "7", "剩下小時分秒0123456789", 300);
   const fromListed = parseRemaining(listed);
   if (fromListed) return fromListed;
+  if (images.soft) {
+    const softText = await readText(worker, images.soft, "7", "剩下小時分秒0123456789", 300);
+    const fromSoft = parseRemaining(softText);
+    if (fromSoft) return fromSoft;
+  }
   const digits = await readText(worker, images.big, "7", "0123456789", 300);
   const compact = String(digits || "").replace(/\D/g, "");
   if (compact.length !== 4) return parseSplitDigits(listed, digits);

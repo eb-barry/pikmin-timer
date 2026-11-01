@@ -119,6 +119,9 @@ export function createAlarms({ getSoundUrl, onDone, onChange }) {
       return audio.play();
     },
     stopPreview,
+    playingId() {
+      return state.current?.id ?? null;
+    },
     checkElapsed() {
       if (state.current && Date.now() - state.current.startedAt >= ALARM_MS) {
         finish(state.current.id);

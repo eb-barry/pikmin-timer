@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   alarmOrder,
+  ringableOrder,
   applyReading,
   clampCooldown,
   describeDraft,
@@ -202,5 +203,16 @@ describe("board order", () => {
     assert.equal(board.rest[0].id, "unknown");
     assert.deepEqual(alarmOrder(timers, 150), ["soon"]);
     assert.deepEqual(alarmOrder(timers, 50), []);
+  });
+
+  it("does not catch up a respawn that this visit never saw ahead", () => {
+    const timers = [
+      { id: "past", respawnAt: 100, createdAt: 1 },
+      { id: "soon", respawnAt: 200, createdAt: 2 }
+    ];
+    assert.deepEqual(ringableOrder(timers, 150, []), []);
+    assert.deepEqual(ringableOrder(timers, 150, ["past"]), ["past"]);
+    assert.deepEqual(ringableOrder(timers, 250, ["soon"]), ["soon"]);
+    assert.deepEqual(ringableOrder(timers, 250, ["past", "soon"]), ["past", "soon"]);
   });
 });

@@ -96,12 +96,6 @@ function isWhiteInk(red, green, blue) {
   return red >= 226 && green >= 226 && blue >= 214 && max - min < 32;
 }
 
-function isPlaceInk(red, green, blue) {
-  const max = Math.max(red, green, blue);
-  const min = Math.min(red, green, blue);
-  return min >= 224 && max - min < 24;
-}
-
 function pad(canvas, amount = 28) {
   const next = document.createElement("canvas");
   next.width = canvas.width + amount * 2;
@@ -174,37 +168,6 @@ function scaleCanvas(canvas, factor, smooth = true) {
   if (smooth) context.imageSmoothingQuality = "high";
   context.drawImage(canvas, 0, 0, next.width, next.height);
   return next;
-}
-
-function trimAfterText(canvas) {
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  const { width, height } = canvas;
-  const data = context.getImageData(0, 0, width, height).data;
-  const columns = [];
-  for (let x = 0; x < width; x += 1) {
-    let ink = 0;
-    for (let y = 0; y < height; y += 2) {
-      if (data[(y * width + x) * 4] < 48) ink += 1;
-    }
-    columns.push(ink);
-  }
-  let seen = false;
-  let gap = 0;
-  let cut = width;
-  for (let x = 0; x < width; x += 1) {
-    if (columns[x] > 1) {
-      seen = true;
-      gap = 0;
-    } else if (seen) {
-      gap += 1;
-      if (gap > 72 && x > width * 0.46) {
-        cut = x - gap;
-        break;
-      }
-    }
-  }
-  if (cut >= width - 8) return canvas;
-  return crop(canvas, 0, 0, Math.min(width, cut + 12), height, 1);
 }
 
 function keepWidestRun(canvas, gapLimit = 22) {
@@ -326,9 +289,209 @@ function fractionCrop(full, band) {
   );
 }
 
-function placeImage(full) {
-  const native = recolor(fractionCrop(full, PLACE_BAND), isPlaceInk);
-  return enlargeLine(native, trimAfterText);
+function median(values) {
+  const sorted = [...values].sort((left, right) => left - right);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2) return sorted[mid];
+  return (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function luminanceOf(red, green, blue) {
+  return (red + green + blue) / 3;
+}
+
+// The place name is the white line inside the gray capsule. The capsule width grows
+// with the name. A ">" sits at the end of that line and is not part of the name.
+// Lights and flowers outside the capsule are ignored.
+function capsuleImage(full) {
+  const band = fractionCrop(full, PLACE_BAND);
+  const context = band.getContext("2d", { willReadFrequently: true });
+  const { width, height } = band;
+  const data = context.getImageData(0, 0, width, height).data;
+  const at = (x, y) => (y * width + x) * 4;
+  const background = [];
+  for (let x = 0; x < width; x += 1) {
+    const column = [];
+    for (let y = 0; y < height; y += 1) {
+      const pixel = at(x, y);
+      column.push(luminanceOf(data[pixel], data[pixel + 1], data[pixel + 2]));
+    }
+    background.push(percentile(column, 0.35));
+  }
+  const smooth = background.map((_, x) => {
+    const radius = 10;
+    const slice = background.slice(Math.max(0, x - radius), Math.min(width, x + radius + 1));
+    return slice.reduce((sum, value) => sum + value, 0) / slice.length;
+  });
+  const columns = [];
+  for (let x = 0; x < width; x += 1) {
+    const rows = [];
+    for (let y = 0; y < height; y += 1) {
+      const pixel = at(x, y);
+      const red = data[pixel];
+      const green = data[pixel + 1];
+      const blue = data[pixel + 2];
+      const luminance = luminanceOf(red, green, blue);
+      const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
+      if (luminance > smooth[x] + 50 && chroma < 42 && luminance > 165) rows.push(y);
+    }
+    columns.push(rows);
+  }
+  const runs = [];
+  let start = -1;
+  let gap = 0;
+  const close = (end) => {
+    if (start < 0) return;
+    runs.push([start, end]);
+    start = -1;
+  };
+  columns.forEach((rows, x) => {
+    if (rows.length >= 2) {
+      if (start < 0) start = x;
+      gap = 0;
+    } else if (start >= 0) {
+      gap += 1;
+      if (gap > 4) close(x - gap);
+    }
+  });
+  close(width - 1);
+  let comps = runs.map(([from, to]) => {
+    const rows = [];
+    let ink = 0;
+    for (let x = from; x <= to; x += 1) {
+      rows.push(...columns[x]);
+      ink += columns[x].length;
+    }
+    if (!rows.length) return null;
+    const top = Math.min(...rows);
+    const bottom = Math.max(...rows);
+    return {
+      from,
+      to,
+      ink,
+      top,
+      bottom,
+      w: to - from + 1,
+      h: bottom - top + 1,
+      cy: (top + bottom) / 2
+    };
+  }).filter((comp) => comp && comp.ink >= 20 && comp.h <= height * 0.72 && comp.h >= height * 0.28);
+  if (!comps.length) return null;
+  const baseline = median(comps.map((comp) => comp.cy));
+  comps = comps.filter((comp) => Math.abs(comp.cy - baseline) <= height * 0.18);
+  comps.sort((left, right) => left.from - right.from);
+  if (!comps.length) return null;
+  const gapLimit = Math.max(14, Math.floor(height * 0.22));
+  const clusters = [];
+  let current = [comps[0]];
+  comps.slice(1).forEach((comp) => {
+    if (comp.from - current[current.length - 1].to <= gapLimit) current.push(comp);
+    else {
+      clusters.push(current);
+      current = [comp];
+    }
+  });
+  clusters.push(current);
+  const chevronAfter = (cluster) => {
+    const widths = median(cluster.map((comp) => comp.w));
+    const end = cluster[cluster.length - 1].to;
+    return comps.find((comp) => (
+      comp.from > end
+      && comp.from <= end + Math.floor(height * 0.55)
+      && comp.w < widths * 0.7
+      && comp.w < comp.h
+    )) || null;
+  };
+  clusters.sort((left, right) => {
+    const leftMark = chevronAfter(left) ? 1 : 0;
+    const rightMark = chevronAfter(right) ? 1 : 0;
+    if (leftMark !== rightMark) return rightMark - leftMark;
+    const leftInk = left.reduce((sum, comp) => sum + comp.ink, 0);
+    const rightInk = right.reduce((sum, comp) => sum + comp.ink, 0);
+    return rightInk - leftInk;
+  });
+  let names = clusters[0].slice();
+  let chevron = chevronAfter(names);
+  if (names.length >= 2) {
+    const body = median(names.slice(0, -1).map((comp) => comp.w));
+    const last = names[names.length - 1];
+    if (last.w < body * 0.55 && last.w < last.h * 0.85) {
+      chevron = last;
+      names = names.slice(0, -1);
+    }
+  }
+  if (!names.length) return null;
+  let left = Math.max(0, names[0].from - 6);
+  let right = Math.min(width - 1, names[names.length - 1].to + 6);
+  if (chevron && chevron.from > names[names.length - 1].to) right = Math.min(right, chevron.from - 2);
+  const top = Math.max(0, Math.min(...names.map((comp) => comp.top)) - 5);
+  const bottom = Math.min(height - 1, Math.max(...names.map((comp) => comp.bottom)) + 5);
+  if (right - left < 8 || bottom - top < 8) return null;
+  return crop(band, left, top, right - left + 1, bottom - top + 1, 1);
+}
+
+function binarizeCapsule(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const { width, height } = canvas;
+  const image = context.getImageData(0, 0, width, height);
+  const data = image.data;
+  const levels = [];
+  for (let index = 0; index < data.length; index += 4) {
+    levels.push(luminanceOf(data[index], data[index + 1], data[index + 2]));
+  }
+  const threshold = percentile(levels, 0.4) + 48;
+  const next = document.createElement("canvas");
+  next.width = width;
+  next.height = height;
+  const output = next.getContext("2d", { willReadFrequently: true }).createImageData(width, height);
+  for (let index = 0; index < data.length; index += 4) {
+    const red = data[index];
+    const green = data[index + 1];
+    const blue = data[index + 2];
+    const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
+    const ink = luminanceOf(red, green, blue) > threshold && chroma < 50;
+    const value = ink ? 0 : 255;
+    output.data[index] = value;
+    output.data[index + 1] = value;
+    output.data[index + 2] = value;
+    output.data[index + 3] = 255;
+  }
+  next.getContext("2d").putImageData(output, 0, 0);
+  return next;
+}
+
+function scalePad(canvas, factor, amount) {
+  const scaled = scaleCanvas(canvas, factor, true);
+  return pad(scaled, amount);
+}
+
+async function readLine(worker, canvas, mode, dpi) {
+  await worker.setParameters({
+    tessedit_pageseg_mode: mode,
+    tessedit_char_whitelist: "",
+    tessedit_char_blacklist: "",
+    user_defined_dpi: String(dpi)
+  });
+  const { data } = await worker.recognize(canvas);
+  return {
+    text: data.text || "",
+    confidence: Number(data.confidence) || 0
+  };
+}
+
+async function choosePlace(worker, color) {
+  const binary = binarizeCapsule(color);
+  const reads = [
+    await readLine(worker, color, "7", 150),
+    await readLine(worker, binary, "7", 150),
+    await readLine(worker, scalePad(binary, 2, 24), "7", 180),
+    await readLine(worker, scalePad(color, 2, 24), "13", 96)
+  ];
+  const ranked = reads
+    .map((read) => ({ ...read, place: readPlace(read.text) }))
+    .filter((read) => read.place)
+    .sort((left, right) => right.confidence - left.confidence);
+  return ranked[0]?.place || "";
 }
 
 function countdownWidth(full) {
@@ -547,21 +710,8 @@ export async function recognizeScreenshot(source) {
   const lightTime = await readText(worker, pad(recolor(copyCanvas(status), isLightInk)), "7", "0123456789:");
   const darkTime = await readText(worker, pad(recolor(status, isDarkInk)), "7", "0123456789:");
   const clock = pickClock([lightTime, darkTime]);
-  const place = placeImage(full);
-  const placeText = await readText(worker, place.half, "13", "", 96);
-  let location = readPlace(placeText);
-  if (!location) location = readPlace(await readText(worker, place.big, "13", "", 96));
-  if (!location) {
-    // A short place name can be snapped to an English word. Read it again as Chinese only.
-    await worker.setParameters({
-      tessedit_char_blacklist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    });
-    try {
-      location = readPlace(await readText(worker, place.half, "13", "", 96));
-    } finally {
-      await worker.setParameters({ tessedit_char_blacklist: "" });
-    }
-  }
+  const place = capsuleImage(full);
+  const location = place ? await choosePlace(worker, place) : "";
 
   let remaining = null;
   for (const remain of countdownBands(full)) {

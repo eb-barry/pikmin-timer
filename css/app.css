@@ -123,42 +123,27 @@ button, input {
 
 .icon-btn:active { transform: scale(0.94); }
 
-.mute-btn svg {
-  width: 22px;
-  height: 22px;
+.mute-btn {
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.94);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 6px 14px rgba(6, 28, 22, 0.22);
 }
 
-.mute-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 48px;
-  max-width: min(64vw, 280px);
-  padding: 0 14px 0 12px;
-  border: 0;
-  border-radius: 999px;
-  background: #fff;
-  color: #8d1d1d;
-  font-weight: 800;
-  cursor: pointer;
+.mute-btn svg {
+  width: 34px;
+  height: 34px;
 }
 
 .mute-btn[hidden] { display: none; }
 
-.mute-btn [data-part="name"] {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mute-more {
-  flex: none;
-  background: #f3d2d2;
-  color: #8d1d1d;
-  border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 12px;
-}
+.mute-btn:active { transform: scale(0.94); }
 
 .reading {
   position: fixed;

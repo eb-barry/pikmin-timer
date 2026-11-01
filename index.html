@@ -18,11 +18,12 @@
   <div id="app" class="app">
     <h1 class="sr-only">皮克敏蘑菇計時</h1>
     <header class="topbar">
-      <button id="muteBtn" class="mute-btn" type="button" hidden>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10h3.2L12 6v12l-4.8-4H4z" fill="currentColor"/><path d="M16 9.2l4.6 5.6M20.6 9.2L16 14.8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <span>靜音</span>
-        <span data-part="name"></span>
-        <span class="mute-more" data-part="more" hidden></span>
+      <button id="muteBtn" class="mute-btn" type="button" hidden aria-label="停止播放">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3.2 9.6h3.2L11 6.1v11.8l-4.6-3.5H3.2z" fill="#243028"/>
+          <circle cx="16.6" cy="12" r="5" fill="none" stroke="#e10600" stroke-width="1.8"/>
+          <path d="M13.8 9.2l5.6 5.6" fill="none" stroke="#e10600" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
       </button>
       <div class="top-actions">
         <button id="uploadBtn" class="icon-btn" type="button" aria-label="上傳截圖">

@@ -325,7 +325,8 @@ button, input {
 
 .clock-lg .place {
   top: 43%;
-  width: 78%;
+  width: max-content;
+  max-width: 7em;
   font-size: clamp(32px, 8.8vw, 44px);
 }
 

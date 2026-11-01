@@ -225,7 +225,7 @@ function updateClock(element, timer, now, size) {
   const digitsEl = element.querySelector("[data-part=digits]");
   const endEl = element.querySelector("[data-part=end]");
   place.classList.toggle("missing", !named);
-  setText(place, named || "?");
+  setText(place, named ? shownPlace(named, size) : "?");
   if (!timed) {
     element.classList.add("is-live");
     element.classList.remove("is-ringing", "is-soon");
@@ -250,6 +250,13 @@ function updateClock(element, timer, now, size) {
   element.setAttribute("aria-label", ringing
     ? `${named || "地點未辨識"}，時間到，已重生`
     : `${named || "地點未辨識"}，還剩 ${digits}，重生 ${end}`);
+}
+
+function shownPlace(name, size) {
+  if (size !== "lg") return name;
+  const chars = Array.from(name);
+  if (chars.length <= 6) return name;
+  return `${chars.slice(0, 6).join("")}…`;
 }
 
 function setText(element, value) {

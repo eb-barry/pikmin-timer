@@ -297,22 +297,54 @@ button, input {
 }
 
 .clock-lg .face {
-  top: 57%;
-  width: 74%;
-  height: 62%;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: none;
 }
 
 .clock-lg .face-hit {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  justify-content: space-evenly;
-  padding: 0 2px;
+  padding: 0;
+  pointer-events: none;
 }
 
-.clock-lg .place { font-size: clamp(32px, 8.8vw, 44px); }
-.clock-lg .digits { font-size: clamp(42px, 12vw, 68px); }
-.clock-lg .end-label { font-size: clamp(13px, 3.4vw, 16px); }
-.clock-lg .end-pill { font-size: clamp(16px, 4.4vw, 22px); padding: 4px 14px; }
+.clock-lg .place,
+.clock-lg .digits,
+.clock-lg .end-label,
+.clock-lg .end-pill {
+  position: absolute;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  pointer-events: auto;
+}
+
+.clock-lg .place {
+  top: 43%;
+  width: 78%;
+  font-size: clamp(32px, 8.8vw, 44px);
+}
+
+/* The countdown sits on the dial's horizontal center, about 10% larger. */
+.clock-lg .digits {
+  top: 58%;
+  font-size: clamp(46.2px, 13.2vw, 74.8px);
+}
+
+.clock-lg .end-label {
+  top: 69.5%;
+  font-size: clamp(13px, 3.4vw, 16px);
+}
+
+.clock-lg .end-pill {
+  top: 78.4%;
+  font-size: clamp(16px, 4.4vw, 22px);
+  padding: 4px 14px;
+}
 
 .clock-empty .digits,
 .clock-empty .end-pill {

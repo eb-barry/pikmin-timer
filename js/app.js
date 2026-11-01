@@ -42,12 +42,8 @@ app.style.backgroundImage = `url("${floorUrl(state.settings.floorId)}")`;
 
 const alarms = createAlarms({
   getSoundUrl: () => soundUrl(state.settings.soundId),
-  onDone: (id) => {
-    state.timers = state.timers.filter((timer) => timer.id !== id);
-    saveState(state);
-    paintBoard(Date.now(), true);
-    alarms.setOrder(playableOrder(Date.now()));
-  },
+  onDone: (id) => removeTimer(id),
+  onFinished: (id) => holdForDelete(id),
   onChange: paintAlarmChrome
 });
 
@@ -60,6 +56,14 @@ fileInput.addEventListener("change", () => {
   if (files.length) receiveFiles(files);
 });
 board.addEventListener("click", (event) => {
+  const dismiss = event.target.closest("[data-action=delete-alarm]");
+  if (dismiss) {
+    event.preventDefault();
+    event.stopPropagation();
+    const id = dismiss.closest(".clock")?.dataset.id;
+    if (id) removeTimer(id);
+    return;
+  }
   const clock = event.target.closest(".clock");
   if (!clock) return;
   const fromKeyboard = event.detail === 0;
@@ -128,6 +132,7 @@ function hideWorkCover() {
 // forgets that list except for a ring that is already playing.
 const SEEN_AHEAD_GAP_MS = 60 * 1000;
 const seenAhead = new Set();
+const awaitingDelete = new Set();
 let lastSeenAt = 0;
 
 function arrive(now) {
@@ -137,17 +142,58 @@ function arrive(now) {
   lastSeenAt = now;
 }
 
-function playableOrder(now) {
+function releaseGone(now) {
+  const live = new Set(state.timers.map((timer) => timer.id));
+  for (const id of [...awaitingDelete]) {
+    const timer = state.timers.find((item) => item.id === id);
+    const stillDue = timer && Number.isFinite(timer.respawnAt) && timer.respawnAt <= now;
+    if (!live.has(id) || !stillDue) awaitingDelete.delete(id);
+  }
+  for (const id of [...seenAhead]) if (!live.has(id)) seenAhead.delete(id);
+}
+
+function noteVisible(now) {
   const playing = alarms.playingId();
-  if (document.visibilityState !== "visible") return playing ? [playing] : [];
+  releaseGone(now);
+  if (document.visibilityState !== "visible") {
+    return { playing, due: playing ? [playing] : [] };
+  }
   if (!lastSeenAt || now - lastSeenAt > SEEN_AHEAD_GAP_MS) arrive(now);
   state.timers.forEach((timer) => {
     if (Number.isFinite(timer.respawnAt) && timer.respawnAt > now) seenAhead.add(timer.id);
   });
   lastSeenAt = now;
-  // Mute has no file. A due clock is removed at once instead of holding the face for 30 seconds.
+  const due = ringableOrder(state.timers, now, seenAhead);
+  if (!soundUrl(state.settings.soundId)) {
+    due.forEach((id) => {
+      if (id !== playing) awaitingDelete.add(id);
+    });
+  }
+  return { playing, due };
+}
+
+function playableOrder(now) {
+  const { playing, due } = noteVisible(now);
   if (!soundUrl(state.settings.soundId)) return playing ? [playing] : [];
-  return ringableOrder(state.timers, now, seenAhead);
+  if (awaitingDelete.size && !playing) return [];
+  return due.filter((id) => !awaitingDelete.has(id));
+}
+
+function removeTimer(id) {
+  awaitingDelete.delete(id);
+  seenAhead.delete(id);
+  state.timers = state.timers.filter((timer) => timer.id !== id);
+  saveState(state);
+  if (state.sheet?.type === "edit" && state.sheet.id === id) closeSheet();
+  paintBoard(Date.now(), true);
+  alarms.setOrder(playableOrder(Date.now()));
+}
+
+function holdForDelete(id) {
+  if (!state.timers.some((timer) => timer.id === id)) return;
+  awaitingDelete.add(id);
+  paintBoard(Date.now(), true);
+  alarms.setOrder(playableOrder(Date.now()));
 }
 
 retireRespawned(Date.now());
@@ -169,14 +215,18 @@ function schedule() {
 }
 
 function retireRespawned(now) {
-  const ringing = new Set(playableOrder(now));
+  const { due } = noteVisible(now);
+  const keep = new Set([...due, ...awaitingDelete]);
   const kept = state.timers.filter((timer) => (
-    !Number.isFinite(timer.respawnAt) || timer.respawnAt > now || ringing.has(timer.id)
+    !Number.isFinite(timer.respawnAt) || timer.respawnAt > now || keep.has(timer.id)
   ));
   if (kept.length === state.timers.length) return;
   const ids = new Set(kept.map((timer) => timer.id));
   state.timers.forEach((timer) => {
-    if (!ids.has(timer.id)) seenAhead.delete(timer.id);
+    if (!ids.has(timer.id)) {
+      seenAhead.delete(timer.id);
+      awaitingDelete.delete(timer.id);
+    }
   });
   state.timers = kept;
   saveState(state);
@@ -242,6 +292,7 @@ function updateClock(element, timer, now, size) {
   }
   const remaining = timer.respawnAt - now;
   const ringing = remaining <= 0;
+  const awaiting = awaitingDelete.has(timer.id);
   element.classList.toggle("is-live", true);
   element.classList.toggle("is-ringing", ringing);
   element.classList.toggle("is-soon", !ringing && remaining < 60000);
@@ -251,9 +302,16 @@ function updateClock(element, timer, now, size) {
   const end = ringing ? "重生了" : formatClock(new Date(timer.respawnAt), { seconds: size === "lg" });
   setText(digitsEl, digits);
   setText(endEl, end);
-  element.setAttribute("aria-label", ringing
-    ? `${named || "地點未辨識"}，時間到，已重生`
-    : `${named || "地點未辨識"}，還剩 ${digits}，重生 ${end}`);
+  const label = element.querySelector(".end-label");
+  label.classList.toggle("is-delete", awaiting);
+  if (awaiting) label.dataset.action = "delete-alarm";
+  else delete label.dataset.action;
+  setText(label, awaiting ? "刪除" : "結束時間");
+  element.setAttribute("aria-label", awaiting
+    ? `${named || "地點未辨識"}，時間到，點擊刪除`
+    : ringing
+      ? `${named || "地點未辨識"}，時間到，已重生`
+      : `${named || "地點未辨識"}，還剩 ${digits}，重生 ${end}`);
 }
 
 function shownPlace(name, size) {

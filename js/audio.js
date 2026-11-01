@@ -1,6 +1,6 @@
 import { ALARM_MS } from "./time.js";
 
-export function createAlarms({ getSoundUrl, onDone, onChange }) {
+export function createAlarms({ getSoundUrl, onDone, onFinished = onDone, onChange }) {
   const state = {
     order: [],
     current: null,
@@ -65,7 +65,7 @@ export function createAlarms({ getSoundUrl, onDone, onChange }) {
   const finish = (id) => {
     if (!state.current || state.current.id !== id) return;
     clearCurrent();
-    onDone(id);
+    onFinished(id);
   };
 
   return {

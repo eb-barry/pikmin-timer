@@ -4,7 +4,6 @@ import { createAlarms, unlockAudio } from "./audio.js";
 import { recognizeScreenshot } from "./ocr.js";
 import { loadState, saveState } from "./store.js";
 import {
-  pendingTimers,
   ringableOrder,
   applyReading,
   formatClock,
@@ -146,6 +145,8 @@ function playableOrder(now) {
     if (Number.isFinite(timer.respawnAt) && timer.respawnAt > now) seenAhead.add(timer.id);
   });
   lastSeenAt = now;
+  // Mute has no file. A due clock is removed at once instead of holding the face for 30 seconds.
+  if (!soundUrl(state.settings.soundId)) return playing ? [playing] : [];
   return ringableOrder(state.timers, now, seenAhead);
 }
 
@@ -168,7 +169,10 @@ function schedule() {
 }
 
 function retireRespawned(now) {
-  const kept = pendingTimers(state.timers, now);
+  const ringing = new Set(playableOrder(now));
+  const kept = state.timers.filter((timer) => (
+    !Number.isFinite(timer.respawnAt) || timer.respawnAt > now || ringing.has(timer.id)
+  ));
   if (kept.length === state.timers.length) return;
   const ids = new Set(kept.map((timer) => timer.id));
   state.timers.forEach((timer) => {
@@ -291,13 +295,7 @@ function moveClocks(previous) {
 
 function paintAlarmChrome(alarm = { playingId: null, waitingIds: [], blocked: false, failed: false }) {
   const playing = state.timers.find((timer) => timer.id === alarm.playingId);
-  muteBtn.hidden = !playing;
-  if (playing) {
-    setText(muteBtn.querySelector("[data-part=name]"), playing.location.trim() || "?");
-    const more = muteBtn.querySelector("[data-part=more]");
-    more.hidden = alarm.waitingIds.length === 0;
-    setText(more, `還有 ${alarm.waitingIds.length}`);
-  }
+  muteBtn.hidden = !(playing && soundUrl(state.settings.soundId));
 }
 
 function receiveFiles(files) {

@@ -1,4 +1,4 @@
-const CACHE = "pikmin-timer-v2";
+const CACHE = "pikmin-timer-v3";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(["./", "./index.html", "./css/app.css", "./js/app.js"])));

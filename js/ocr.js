@@ -343,55 +343,97 @@ function countdownSpan(full) {
   const bottom = Math.min(height - 1, Math.floor(anchor - height * 0.016));
   const context = full.getContext("2d", { willReadFrequently: true });
   const data = context.getImageData(0, 0, width, height).data;
-  const x0 = Math.floor(width * 0.012);
-  const xEnd = Math.floor(width * 0.58);
-  const rows = [];
-  for (let y = top; y <= bottom; y += 1) {
-    let ink = 0;
-    let first = xEnd;
-    let last = 0;
-    for (let x = x0; x < xEnd; x += 1) {
-      const pixel = (y * width + x) * 4;
-      if (isWhiteInk(data[pixel], data[pixel + 1], data[pixel + 2])) {
-        ink += 1;
-        if (x < first) first = x;
-        if (x > last) last = x;
+  const measure = (portion) => {
+    const x0 = Math.floor(width * 0.012);
+    const xEnd = Math.floor(width * portion);
+    const rows = [];
+    for (let y = top; y <= bottom; y += 1) {
+      let ink = 0;
+      let first = xEnd;
+      let last = 0;
+      for (let x = x0; x < xEnd; x += 1) {
+        const pixel = (y * width + x) * 4;
+        if (isWhiteInk(data[pixel], data[pixel + 1], data[pixel + 2])) {
+          ink += 1;
+          if (x < first) first = x;
+          if (x > last) last = x;
+        }
       }
+      rows.push({ ink, span: last > first ? last - first : 0 });
     }
-    rows.push({ ink, span: last > first ? last - first : 0 });
-  }
-  const clusters = [];
-  let start = -1;
-  let sum = 0;
-  let span = 0;
-  const close = (end) => {
-    if (start < 0) return;
-    const band = end - start + 1;
-    if (band >= 8 && band <= height * 0.028 && sum >= 80 && span >= 70) {
-      clusters.push({ start: top + start, end: top + end, sum, span });
-    }
-    start = -1;
-    sum = 0;
-    span = 0;
+    return rows;
   };
-  rows.forEach((row, index) => {
-    if (row.ink >= 8) {
-      if (start < 0) start = index;
-      sum += row.ink;
-      span = Math.max(span, row.span);
-    } else {
-      close(index - 1);
-    }
-  });
-  close(rows.length - 1);
-  if (!clusters.length) return null;
-  const chosen = clusters.reduce((best, cluster) => (cluster.end > best.end ? cluster : best));
+  const collect = (rows, gate) => {
+    const found = [];
+    let start = -1;
+    let sum = 0;
+    let span = 0;
+    const close = (end) => {
+      if (start < 0) return;
+      const band = end - start + 1;
+      if (band >= 8 && band <= height * 0.028 && sum >= 80 && span >= 70) {
+        found.push({ start: top + start, end: top + end, sum, span });
+      }
+      start = -1;
+      sum = 0;
+      span = 0;
+    };
+    rows.forEach((row, index) => {
+      if (row.ink >= gate) {
+        if (start < 0) start = index;
+        sum += row.ink;
+        span = Math.max(span, row.span);
+      } else {
+        close(index - 1);
+      }
+    });
+    close(rows.length - 1);
+    return found;
+  };
+  // The wide strip often glues the hit-point digits to the countdown, because flowers fill the gap.
+  // The countdown itself is the lower line, and that gap stays open on its left side.
+  let clusters = collect(measure(0.58), 8);
+  let split = false;
+  if (!clusters.length) {
+    split = true;
+    const left = measure(0.28);
+    clusters = collect(left, 8);
+    if (!clusters.length) clusters = collect(left, 18);
+  }
+  const lower = clusters.filter((cluster) => cluster.start >= top + (bottom - top) * 0.45);
+  if (!lower.length) return null;
+  const chosen = lower.reduce((best, cluster) => (cluster.end > best.end ? cluster : best));
   const margin = 4;
   const y = Math.max(0, chosen.start - margin);
+  let x = width * 0.008;
+  let w = width * 0.7;
+  if (split) {
+    const gapLimit = Math.max(40, Math.round(width * 0.045));
+    let last = Math.floor(width * 0.012);
+    let gap = 0;
+    let seen = false;
+    const limit = Math.floor(width * 0.75);
+    for (let px = last; px < limit; px += 1) {
+      let ink = 0;
+      for (let row = chosen.start; row <= chosen.end; row += 1) {
+        const pixel = (row * width + px) * 4;
+        if (isWhiteInk(data[pixel], data[pixel + 1], data[pixel + 2])) ink += 1;
+      }
+      if (ink >= 2) {
+        seen = true;
+        gap = 0;
+        last = px;
+      } else if (seen) {
+        gap += 1;
+        if (gap > gapLimit) break;
+      }
+    }
+    w = Math.max(width * 0.22, Math.min(width - x, last + Math.round(width * 0.02) - x));
+  }
   return {
-    x: width * 0.008,
+    x,
     y,
-    w: width * 0.7,
+    w,
     h: Math.min(height - y, chosen.end - chosen.start + 1 + margin * 2)
   };
 }
@@ -410,7 +452,6 @@ function countdownBands(full) {
     const line = maskedCountdown(crop(full, span.x, span.y, span.w, span.h, 1));
     if (line) images.push(line);
   }
-  if (images.length) return images;
   const sheet = findSheetTop(full);
   const anchor = sheet == null ? full.height * 0.488 : sheet;
   const fallback = maskedCountdown(crop(
@@ -421,7 +462,8 @@ function countdownBands(full) {
     Math.max(18, full.height * 0.022),
     1
   ));
-  return fallback ? [fallback] : [];
+  if (fallback) images.push(fallback);
+  return images;
 }
 
 function acceptRemaining(text) {
@@ -459,20 +501,32 @@ export async function recognizeScreenshot(source) {
   const width = full.width;
   const height = full.height;
 
-  const lightStatus = pad(recolor(
-    crop(full, 0, 0, width * 0.5, height * 0.07, 3),
-    isLightInk
-  ));
-  const darkStatus = pad(recolor(
-    crop(full, 0, 0, width * 0.5, height * 0.07, 3),
-    isDarkInk
-  ));
-  const lightTime = await readText(worker, lightStatus, "7", "0123456789:");
-  const darkTime = await readText(worker, darkStatus, "7", "0123456789:");
+  // The phone clock is the leftmost status time. A center pill can show a second time, which is not the screenshot clock.
+  const status = crop(full, 0, 0, width * 0.26, height * 0.06, 4);
+  const lightTime = await readText(worker, pad(recolor(copyCanvas(status), isLightInk)), "7", "0123456789:");
+  const darkTime = await readText(worker, pad(recolor(status, isDarkInk)), "7", "0123456789:");
+  let clock = pickClock([lightTime, darkTime]);
+  if (!clock) {
+    const wideStatus = crop(full, 0, 0, width * 0.5, height * 0.07, 3);
+    const wideLight = await readText(worker, pad(recolor(copyCanvas(wideStatus), isLightInk)), "7", "0123456789:");
+    const wideDark = await readText(worker, pad(recolor(wideStatus, isDarkInk)), "7", "0123456789:");
+    clock = pickClock([wideLight, wideDark]);
+  }
   const place = placeImage(full);
   const placeText = await readText(worker, place.half, "13", "", 96);
   let location = readPlace(placeText);
   if (!location) location = readPlace(await readText(worker, place.big, "13", "", 96));
+  if (!location) {
+    // A short place name can be snapped to an English word. Read it again as Chinese only.
+    await worker.setParameters({
+      tessedit_char_blacklist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    });
+    try {
+      location = readPlace(await readText(worker, place.half, "13", "", 96));
+    } finally {
+      await worker.setParameters({ tessedit_char_blacklist: "" });
+    }
+  }
 
   let remaining = null;
   for (const remain of countdownBands(full)) {
@@ -483,6 +537,6 @@ export async function recognizeScreenshot(source) {
   return {
     location,
     remaining,
-    clock: pickClock([lightTime, darkTime])
+    clock
   };
 }

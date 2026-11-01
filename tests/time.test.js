@@ -11,6 +11,7 @@ import {
   formatCountdown,
   meridiemLabel,
   nextTimers,
+  pendingTimers,
   shiftAnchor,
   splitBoard,
   suggestAnchor,
@@ -203,6 +204,19 @@ describe("board order", () => {
     assert.equal(board.rest[0].id, "unknown");
     assert.deepEqual(alarmOrder(timers, 150), ["soon"]);
     assert.deepEqual(alarmOrder(timers, 50), []);
+  });
+
+  it("drops a respawned mushroom and leaves the next one", () => {
+    const timers = [
+      { id: "past", respawnAt: 100, createdAt: 1 },
+      { id: "soon", respawnAt: 200, createdAt: 2 },
+      { id: "unknown", respawnAt: null, createdAt: 3 }
+    ];
+    const kept = pendingTimers(timers, 150);
+    assert.deepEqual(kept.map((timer) => timer.id), ["soon", "unknown"]);
+    const board = splitBoard(kept);
+    assert.equal(board.hero.id, "soon");
+    assert.equal(board.rest[0].id, "unknown");
   });
 
   it("does not catch up a respawn that this visit never saw ahead", () => {

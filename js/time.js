@@ -146,6 +146,10 @@ export function splitBoard(timers) {
   return { hero: sorted[0], rest: sorted.slice(1) };
 }
 
+export function pendingTimers(timers, now) {
+  return timers.filter((timer) => !hasInstant(timer) || timer.respawnAt > now);
+}
+
 export function alarmOrder(timers, now) {
   return sortTimers(timers)
     .filter((timer) => hasInstant(timer) && timer.respawnAt <= now)

@@ -53,6 +53,12 @@ export function parseRemaining(text) {
   if (withHours && /剩下|小時/.test(body)) {
     return clampRemain(Number(withHours[1]), Number(withHours[2]), Number(withHours[3]));
   }
+  // 剩 and 秒 sit at the two ends of the line and are the first strokes a reader drops.
+  // Accept the hour line only when the trailing number is not a longer run of digits.
+  const hoursOpen = body.match(/(\d{1,2})\D{0,3}小時\D{0,3}(\d{1,2})\D{0,3}分\D{0,3}(\d{1,2})(?!\d)/);
+  if (hoursOpen && /小時/.test(body) && /分/.test(body)) {
+    return clampRemain(Number(hoursOpen[1]), Number(hoursOpen[2]), Number(hoursOpen[3]));
+  }
   if (/小時/.test(body)) return null;
   const minutes = body.match(/剩下(\d+)分(\d+)秒/) || body.match(/(\d+)分(\d+)秒/);
   if (minutes && /剩下|分/.test(body)) {

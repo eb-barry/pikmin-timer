@@ -421,11 +421,36 @@ function capsuleImage(full) {
     }
   }
   if (!names.length) return null;
-  let left = Math.max(0, names[0].from - 6);
   let right = Math.min(width - 1, names[names.length - 1].to + 6);
   if (chevron && chevron.from > names[names.length - 1].to) right = Math.min(right, chevron.from - 2);
   const top = Math.max(0, Math.min(...names.map((comp) => comp.top)) - 5);
   const bottom = Math.min(height - 1, Math.max(...names.map((comp) => comp.bottom)) + 5);
+  // The left half of the first character can fall below the white-ink threshold
+  // where the capsule darkens. Extend only while faint strokes are still there.
+  const lineHeight = Math.max(...names.map((comp) => comp.h));
+  const limit = Math.max(0, names[0].from - Math.round(lineHeight * 1.3));
+  let faint = names[0].from;
+  let empty = 0;
+  for (let x = names[0].from - 1; x >= limit; x -= 1) {
+    let hits = 0;
+    for (let y = top; y <= bottom; y += 1) {
+      const pixel = at(x, y);
+      const red = data[pixel];
+      const green = data[pixel + 1];
+      const blue = data[pixel + 2];
+      const luminance = luminanceOf(red, green, blue);
+      const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
+      if (luminance > 145 && chroma < 70 && luminance > smooth[x] + 18) hits += 1;
+    }
+    if (hits >= 2) {
+      faint = x;
+      empty = 0;
+    } else {
+      empty += 1;
+      if (empty > 5) break;
+    }
+  }
+  const left = Math.max(0, faint - 4);
   if (right - left < 8 || bottom - top < 8) return null;
   return crop(band, left, top, right - left + 1, bottom - top + 1, 1);
 }
@@ -667,6 +692,14 @@ function sharpCountdown(native) {
   return pad(scaleCanvas(clipCountdown(masked), 3, false), 28);
 }
 
+// The smoothed enlargement can drop 剩 at the start and 秒 at the end.
+// A sharp copy of the strict white mask still has both, without the meadow ink.
+function sharpWhiteCountdown(native) {
+  const masked = recolor(copyCanvas(native), isWhiteInk);
+  if (inkCount(masked) < 40) return null;
+  return pad(scaleCanvas(clipCountdown(masked), 3, false), 28);
+}
+
 function countdownBands(full) {
   const band = {
     x: COUNTDOWN_BAND.x,
@@ -677,10 +710,12 @@ function countdownBands(full) {
   const native = fractionCrop(full, band);
   const line = maskedCountdown(native);
   const soft = sharpCountdown(native);
-  if (!line && !soft) return [];
+  const sharp = sharpWhiteCountdown(native);
+  if (!line && !soft && !sharp) return [];
   return [{
-    half: line?.half || soft,
-    big: line?.big || soft,
+    half: line?.half || sharp || soft,
+    big: line?.big || sharp || soft,
+    sharp,
     soft
   }];
 }
@@ -703,6 +738,14 @@ async function readCountdown(worker, images) {
   const listed = await readText(worker, images.big, "7", "剩下小時分秒0123456789", 300);
   const fromListed = parseRemaining(listed);
   if (fromListed) return fromListed;
+  if (images.sharp) {
+    const sharpText = await readText(worker, images.sharp, "7", "剩下小時分秒0123456789", 300);
+    const fromSharp = parseRemaining(sharpText);
+    if (fromSharp) return fromSharp;
+    const sharpBlock = await readText(worker, images.sharp, "13", "剩下小時分秒0123456789", 300);
+    const fromBlock = parseRemaining(sharpBlock);
+    if (fromBlock) return fromBlock;
+  }
   if (images.soft) {
     const softText = await readText(worker, images.soft, "7", "剩下小時分秒0123456789", 300);
     const fromSoft = parseRemaining(softText);

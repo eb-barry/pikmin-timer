@@ -311,8 +311,13 @@ button, input {
 .clock-lg .place {
   top: 43%;
   width: max-content;
-  max-width: 7em;
+  max-width: none;
   font-size: clamp(32px, 8.8vw, 44px);
+}
+
+.clock-lg .place-name {
+  overflow: visible;
+  text-overflow: clip;
 }
 
 /* The countdown sits on the dial's horizontal center, about 10% larger. */

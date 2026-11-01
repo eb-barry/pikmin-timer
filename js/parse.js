@@ -45,16 +45,20 @@ export function parseDigitRun(digits, witness = "") {
 
 export function parseRemaining(text) {
   const source = squash(text);
-  const withHours = source.match(/(\d+)\D{0,4}小時\D{0,4}(\d+)\D{0,4}分\D{0,4}(\d+)\D{0,4}秒/);
-  if (withHours && /剩下|小時/.test(source)) {
+  // The countdown is the time after 剩下. Digits in front of it are the hit points.
+  const marked = source.lastIndexOf("剩下");
+  const at = marked >= 0 ? marked : source.lastIndexOf("剩");
+  const body = at >= 0 ? source.slice(at) : source;
+  const withHours = body.match(/(\d+)\D{0,4}小時\D{0,4}(\d+)\D{0,4}分\D{0,4}(\d+)\D{0,4}秒/);
+  if (withHours && /剩下|小時/.test(body)) {
     return clampRemain(Number(withHours[1]), Number(withHours[2]), Number(withHours[3]));
   }
-  if (/小時/.test(source)) return null;
-  const minutes = source.match(/剩下(\d+)分(\d+)秒/) || source.match(/(\d+)分(\d+)秒/);
-  if (minutes && /剩下|分/.test(source)) {
+  if (/小時/.test(body)) return null;
+  const minutes = body.match(/剩下(\d+)分(\d+)秒/) || body.match(/(\d+)分(\d+)秒/);
+  if (minutes && /剩下|分/.test(body)) {
     return clampRemain(0, Number(minutes[1]), Number(minutes[2]));
   }
-  const seconds = source.match(/^剩下(\d{1,2})秒$/);
+  const seconds = body.match(/^剩下(\d{1,2})秒$/);
   if (seconds) return clampRemain(0, 0, Number(seconds[1]));
   const english = String(text || "").match(/(\d+)\s*h(?:ours?)?\s*(\d+)\s*m(?:in(?:utes?)?)?\s*(\d+)\s*s(?:ec(?:onds?)?)?/i);
   if (english) return clampRemain(Number(english[1]), Number(english[2]), Number(english[3]));

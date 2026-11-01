@@ -1,5 +1,41 @@
 import { ALARM_MS } from "./time.js";
 
+const SILENT_WAV = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=";
+
+let sharedAudio = null;
+let sharedContext = null;
+
+function outputElement() {
+  if (!sharedAudio) {
+    sharedAudio = new Audio();
+    sharedAudio.setAttribute("playsinline", "");
+    sharedAudio.setAttribute("webkit-playsinline", "");
+    sharedAudio.preload = "auto";
+  }
+  return sharedAudio;
+}
+
+function outputContext() {
+  const Ctx = globalThis.AudioContext || globalThis.webkitAudioContext;
+  if (!Ctx) return null;
+  if (!sharedContext) sharedContext = new Ctx();
+  return sharedContext;
+}
+
+async function playThroughContext(url) {
+  const ctx = outputContext();
+  if (!ctx || ctx.state !== "running") throw new Error("blocked");
+  const response = await fetch(url);
+  const encoded = await response.arrayBuffer();
+  const buffer = await ctx.decodeAudioData(encoded.slice(0));
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.loop = true;
+  source.connect(ctx.destination);
+  source.start();
+  return source;
+}
+
 export function createAlarms({ getSoundUrl, onDone, onFinished = onDone, onChange }) {
   const state = {
     order: [],
@@ -27,11 +63,20 @@ export function createAlarms({ getSoundUrl, onDone, onFinished = onDone, onChang
   const clearCurrent = () => {
     if (!state.current) return;
     clearTimeout(state.current.timer);
-    if (state.current.audio) {
-      state.current.audio.pause();
-      state.current.audio.src = "";
-    }
+    try { state.current.source?.stop(); } catch { /* already stopped */ }
+    if (state.current.audio) state.current.audio.pause();
     state.current = null;
+  };
+
+  const giveUp = (id, error) => {
+    if (!state.current || state.current.id !== id) return;
+    clearTimeout(state.current.timer);
+    state.current.audio?.pause();
+    try { state.current.source?.stop(); } catch { /* already stopped */ }
+    state.current = null;
+    state.blocked = error?.name === "NotAllowedError" || error?.message === "blocked";
+    state.failed = !state.blocked;
+    emit();
   };
 
   const start = (id) => {
@@ -42,23 +87,39 @@ export function createAlarms({ getSoundUrl, onDone, onFinished = onDone, onChang
     state.blocked = false;
     state.failed = false;
     if (!url) {
-      state.current = { id, audio: null, timer, startedAt: Date.now() };
+      state.current = { id, audio: null, source: null, timer, startedAt: Date.now() };
       emit();
       return;
     }
-    const audio = new Audio(url);
+    const audio = outputElement();
+    audio.pause();
+    audio.muted = false;
+    audio.volume = 1;
     audio.loop = true;
     audio.preload = "auto";
-    state.current = { id, audio, timer, startedAt: Date.now() };
+    audio.src = url;
+    audio.currentTime = 0;
+    state.current = { id, audio, source: null, timer, startedAt: Date.now() };
     emit();
-    audio.play().catch((error) => {
+    audio.play().catch(async (error) => {
       if (!state.current || state.current.id !== id) return;
-      clearTimeout(state.current.timer);
-      state.current.audio.pause();
-      state.current = null;
-      state.blocked = error?.name === "NotAllowedError";
-      state.failed = !state.blocked;
-      emit();
+      if (error?.name !== "NotAllowedError") {
+        giveUp(id, error);
+        return;
+      }
+      try {
+        const source = await playThroughContext(url);
+        if (!state.current || state.current.id !== id) {
+          try { source.stop(); } catch { /* already stopped */ }
+          return;
+        }
+        state.current.source = source;
+        state.blocked = false;
+        state.failed = false;
+        emit();
+      } catch {
+        giveUp(id, error);
+      }
     });
   };
 
@@ -131,11 +192,28 @@ export function createAlarms({ getSoundUrl, onDone, onFinished = onDone, onChang
 }
 
 export function unlockAudio(url) {
-  if (!url) return;
-  const audio = new Audio(url);
-  audio.volume = 0.001;
+  const ctx = outputContext();
+  if (ctx && ctx.state === "suspended") ctx.resume();
+  if (ctx) {
+    try {
+      const buffer = ctx.createBuffer(1, 1, ctx.sampleRate || 22050);
+      const node = ctx.createBufferSource();
+      node.buffer = buffer;
+      node.connect(ctx.destination);
+      node.start();
+    } catch { /* a second gesture can prime it again */ }
+  }
+  const audio = outputElement();
+  if (audio.dataset.primed === "1") return;
+  audio.dataset.primed = "1";
+  audio.volume = 0;
+  audio.muted = true;
+  if (!audio.getAttribute("src")) audio.src = url || SILENT_WAV;
   audio.play()?.then(() => {
     audio.pause();
-    audio.src = "";
-  }).catch(() => {});
+    audio.muted = false;
+    audio.volume = 1;
+  }).catch(() => {
+    delete audio.dataset.primed;
+  });
 }

@@ -49,6 +49,8 @@ describe("destruction time", () => {
     assert.deepEqual(matchClock("11:10 1:27"), { hour: 11, minute: 10, meridiem: null });
     assert.equal(parseRemaining("AVES 小時32 分 28 秒"), null);
     assert.deepEqual(parseRemaining("剩下3 小時 32 分 28 秒"), { hours: 3, minutes: 32, seconds: 28 });
+    assert.deepEqual(parseRemaining("下10小時9分20"), { hours: 10, minutes: 9, seconds: 20 });
+    assert.equal(parseRemaining("下10小時9分204"), null);
     assert.equal(cleanLocation("  名人鄉村小公園 > "), "名人鄉村小公園");
     assert.equal(readPlace("名 人 鄉村 小 公園 > |"), "名人鄉村小公園");
     assert.equal(readPlace("名人鄉村小公園》4"), "名人鄉村小公園");

@@ -3,19 +3,20 @@ import { FLOORS, SOUNDS, floorThumbUrl, floorUrl, soundUrl } from "./catalog.js"
 import { createAlarms, unlockAudio } from "./audio.js";
 import { recognizeScreenshot } from "./ocr.js";
 import { loadState, saveState } from "./store.js";
+import { APP_VERSION } from "./version.js";
 import {
   ringableOrder,
   applyReading,
   formatClock,
   formatCountdown,
   MAX_TIMERS,
+  DIM_IDLE_MS,
   clampCooldown,
   cooldownDuration,
   nextTimers,
   splitBoard,
   toDateInput,
-  toTimeInput,
-  WAKE_WINDOW_MS
+  toTimeInput
 } from "./time.js";
 
 const loaded = loadState();
@@ -35,6 +36,10 @@ const fileInput = document.getElementById("fileInput");
 const muteBtn = document.getElementById("muteBtn");
 const readout = document.getElementById("reading");
 const workCover = document.getElementById("workCover");
+const dimCover = document.getElementById("dimCover");
+const dimDigits = document.getElementById("dimDigits");
+const appVersion = document.getElementById("appVersion");
+const settingsBtn = document.getElementById("settingsBtn");
 let readGeneration = 0;
 let noticeTimer = 0;
 
@@ -47,8 +52,10 @@ const alarms = createAlarms({
   onChange: paintAlarmChrome
 });
 
+appVersion.textContent = APP_VERSION;
+settingsBtn.setAttribute("aria-label", `設定，版本 ${APP_VERSION}`);
 document.getElementById("uploadBtn").addEventListener("click", () => fileInput.click());
-document.getElementById("settingsBtn").addEventListener("click", openSettings);
+settingsBtn.addEventListener("click", openSettings);
 muteBtn.addEventListener("click", () => alarms.mute());
 fileInput.addEventListener("change", () => {
   const files = [...fileInput.files];
@@ -83,13 +90,22 @@ document.addEventListener("keydown", (event) => {
 document.addEventListener("pointerdown", () => {
   unlockAudio(soundUrl(state.settings.soundId));
 }, { once: true });
-document.addEventListener("pointerdown", () => {
+document.addEventListener("pointerdown", (event) => {
   if (alarms.needsGesture()) alarms.playFromGesture();
+  wakeFailed = false;
+  noteActivity(event);
+  syncWakeLock();
 });
 document.addEventListener("click", onWorkCoverClick);
 workCover.addEventListener("click", (event) => {
   event.stopPropagation();
   hideWorkCover();
+});
+dimCover.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  lastActivityAt = Date.now();
+  hideDim();
 });
 document.addEventListener("contextmenu", (event) => {
   if (event.target.closest("input, textarea")) return;
@@ -104,6 +120,7 @@ document.addEventListener("dragstart", (event) => {
   event.preventDefault();
 });
 document.addEventListener("visibilitychange", () => {
+  wakeFailed = false;
   if (document.visibilityState !== "visible") return;
   // Coming back is a new look. A mushroom that respawned while we were away stays quiet.
   arrive(Date.now());
@@ -117,7 +134,7 @@ function onWorkCoverClick(event) {
   if (event.detail === 0) return;
   const blocked = event.composedPath().some((node) => (
     node instanceof Element
-    && node.matches(".face-hit, .top-actions, .mute-btn, .work-cover, a, input, label, .sheet, .gesture")
+    && node.matches(".face-hit, .top-actions, .mute-btn, .work-cover, .dim-cover, a, input, label, .sheet, .gesture")
   ));
   if (blocked) return;
   workCover.hidden = false;
@@ -125,6 +142,48 @@ function onWorkCoverClick(event) {
 
 function hideWorkCover() {
   workCover.hidden = true;
+}
+
+const dimIdleMs = Number(window.__PIKMIN_DIM_IDLE_MS) > 0 ? Number(window.__PIKMIN_DIM_IDLE_MS) : DIM_IDLE_MS;
+let lastActivityAt = Date.now();
+
+function noteActivity(event) {
+  if (event.target instanceof Element && event.target.closest(".dim-cover")) return;
+  lastActivityAt = Date.now();
+  hideDim();
+}
+
+function hideDim() {
+  dimCover.hidden = true;
+}
+
+function alarmNeedsTheScreen() {
+  return Boolean(alarms.playingId()) || awaitingDelete.size > 0;
+}
+
+function paintDimDigits() {
+  const source = board.querySelector(".clock-lg [data-part=digits]");
+  const text = source?.textContent || "";
+  setText(dimDigits, text);
+  dimCover.setAttribute("aria-label", text ? `倒數 ${text}，點一下回到畫面` : "點一下回到畫面");
+  if (!source) return;
+  const box = source.getBoundingClientRect();
+  dimDigits.style.left = `${box.left + box.width / 2}px`;
+  dimDigits.style.top = `${box.top + box.height / 2}px`;
+  dimDigits.style.fontSize = getComputedStyle(source).fontSize;
+}
+
+function syncDim(now) {
+  if (alarmNeedsTheScreen()) {
+    hideDim();
+    return;
+  }
+  if (document.visibilityState !== "visible") return;
+  if (dimCover.hidden) {
+    if (now - lastActivityAt < dimIdleMs) return;
+    dimCover.hidden = false;
+  }
+  paintDimDigits();
 }
 
 // Seen-ahead ids are mushrooms whose respawn was still in the future while this
@@ -240,7 +299,8 @@ function tick() {
   paintBoard(now);
   paintEditLive();
   alarms.setOrder(playableOrder(now));
-  syncWakeLock(now);
+  syncWakeLock();
+  syncDim(now);
 }
 
 function paintBoard(now, force = false) {
@@ -527,7 +587,7 @@ function settingsMarkup() {
       <input id="workMode" type="checkbox" ${settings.workMode ? "checked" : ""}>
     </label>
     <label class="switch-row">
-      <span><span class="sound-name">最後 5 分鐘保持螢幕亮著</span><span class="hint">${"wakeLock" in navigator ? "只有最近的一顆少於 5 分鐘時才會亮。" : "這台瀏覽器可能無法保持亮螢幕。"}</span></span>
+      <span><span class="sound-name">保持螢幕亮著</span><span class="hint">${"wakeLock" in navigator ? "這個頁面在前景時不讓螢幕自己關掉。" : "這台瀏覽器可能無法保持亮螢幕。"}</span></span>
       <input id="keepAwake" type="checkbox" ${settings.keepAwake ? "checked" : ""}>
     </label>`;
 }
@@ -619,7 +679,8 @@ function onSheetChange(event) {
   if (input.id === "keepAwake") {
     state.settings.keepAwake = input.checked;
     saveState(state);
-    syncWakeLock(Date.now());
+    wakeFailed = false;
+    syncWakeLock();
   }
   if (input.id === "workMode") {
     state.settings.workMode = input.checked;
@@ -715,27 +776,40 @@ function deleteEdit(button) {
 }
 
 let wakeSentinel = null;
+let wakeFailed = false;
+let wakePending = false;
 
-async function syncWakeLock(now) {
-  const nearest = state.timers
-    .filter((timer) => Number.isFinite(timer.respawnAt) && timer.respawnAt > now)
-    .sort((a, b) => a.respawnAt - b.respawnAt)[0];
-  const want = state.settings.keepAwake
-    && document.visibilityState === "visible"
-    && nearest
-    && nearest.respawnAt - now <= WAKE_WINDOW_MS;
-  if (want && !wakeSentinel && navigator.wakeLock) {
-    try {
-      wakeSentinel = await navigator.wakeLock.request("screen");
-      wakeSentinel.addEventListener("release", () => { wakeSentinel = null; });
-    } catch {
+async function syncWakeLock() {
+  const want = state.settings.keepAwake && document.visibilityState === "visible";
+  if (!want) {
+    if (wakeSentinel) {
+      const current = wakeSentinel;
       wakeSentinel = null;
+      current.release().catch(() => {});
     }
-  } else if (!want && wakeSentinel) {
-    wakeSentinel.release().catch(() => {});
+    return;
+  }
+  if (wakeSentinel || wakeFailed || wakePending || !navigator.wakeLock) return;
+  wakePending = true;
+  try {
+    const sentinel = await navigator.wakeLock.request("screen");
+    if (!state.settings.keepAwake || document.visibilityState !== "visible") {
+      sentinel.release().catch(() => {});
+      return;
+    }
+    wakeSentinel = sentinel;
+    sentinel.addEventListener("release", () => {
+      if (wakeSentinel === sentinel) wakeSentinel = null;
+    });
+  } catch {
+    wakeFailed = true;
     wakeSentinel = null;
+  } finally {
+    wakePending = false;
   }
 }
+
+syncWakeLock();
 
 function escapeAttr(value) {
   return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");

@@ -81,7 +81,11 @@ function isLightInk(red, green, blue) {
 }
 
 function isDarkInk(red, green, blue) {
-  return red < 80 && green < 80 && blue < 80;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  // Status type is nearly black. Dark green hedge and shadow sit just above
+  // this and would fuse with the digits once the crop is enlarged.
+  return max < 48 && max - min < 14;
 }
 
 function isCountdownInk(red, green, blue) {
@@ -765,16 +769,150 @@ function pickClock(texts) {
   return (clean || found[0])?.clock || null;
 }
 
+function statusRuns(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const { width, height } = canvas;
+  const data = context.getImageData(0, 0, width, height).data;
+  const columns = [];
+  for (let x = 0; x < width; x += 1) {
+    const rows = [];
+    for (let y = 0; y < height; y += 1) {
+      if (data[(y * width + x) * 4] < 80) rows.push(y);
+    }
+    columns.push(rows);
+  }
+  const runs = [];
+  let start = -1;
+  let gap = 0;
+  const close = (end) => {
+    if (start < 0) return;
+    const rows = new Set();
+    for (let x = start; x <= end; x += 1) columns[x].forEach((y) => rows.add(y));
+    if (rows.size) {
+      const ordered = [...rows].sort((left, right) => left - right);
+      let parts = 1;
+      for (let index = 1; index < ordered.length; index += 1) {
+        if (ordered[index] > ordered[index - 1] + 1) parts += 1;
+      }
+      runs.push({
+        start,
+        end,
+        y0: ordered[0],
+        y1: ordered[ordered.length - 1],
+        parts
+      });
+    }
+    start = -1;
+  };
+  columns.forEach((rows, x) => {
+    if (rows.length) {
+      if (start < 0) start = x;
+      gap = 0;
+    } else if (start >= 0) {
+      gap += 1;
+      if (gap > 2) close(x - gap);
+    }
+  });
+  close(width - 1);
+  return runs;
+}
+
+function isStatusColon(run, lineHeight) {
+  const width = run.end - run.start + 1;
+  const height = run.y1 - run.y0 + 1;
+  return run.parts === 2 && width <= lineHeight * 0.45 && height >= lineHeight * 0.45 && height <= lineHeight * 0.95;
+}
+
+// Digits sit on either side of the two status-bar dots. The location mark is wider
+// and stays outside the crop, so it is not read as an extra digit.
+function isolateStatusTime(canvas) {
+  const runs = statusRuns(canvas);
+  const textRuns = runs.filter((run) => {
+    const height = run.y1 - run.y0 + 1;
+    return height >= canvas.height * 0.14 && height <= canvas.height * 0.34;
+  });
+  if (textRuns.length < 3) return null;
+  const y0 = median(textRuns.map((run) => run.y0));
+  const y1 = median(textRuns.map((run) => run.y1));
+  const lineHeight = y1 - y0 + 1;
+  if (lineHeight < 8) return null;
+  const aligned = runs.filter((run) => {
+    const height = run.y1 - run.y0 + 1;
+    return run.y0 >= y0 - 4 && run.y1 <= y1 + 6 && height <= lineHeight * 1.35;
+  });
+  const sideOf = (colonIndex, direction) => {
+    const taken = [];
+    let previous = aligned[colonIndex];
+    for (let index = colonIndex + direction; index >= 0 && index < aligned.length; index += direction) {
+      const run = aligned[index];
+      const gap = direction > 0 ? run.start - previous.end - 1 : previous.start - run.end - 1;
+      if (gap > lineHeight * 0.6) break;
+      const width = run.end - run.start + 1;
+      const height = run.y1 - run.y0 + 1;
+      if (isStatusColon(run, lineHeight) || width > lineHeight * 1.08 || height > lineHeight * 1.25) break;
+      if (taken.length >= 2) return null;
+      taken.push(run);
+      previous = run;
+    }
+    return direction > 0 ? taken : taken.reverse();
+  };
+  const matches = [];
+  aligned.forEach((run, index) => {
+    if (!isStatusColon(run, lineHeight)) return;
+    const left = sideOf(index, -1);
+    const right = sideOf(index, 1);
+    if (!left || !right || left.length < 1 || left.length > 2 || right.length !== 2) return;
+    matches.push({ left, right });
+  });
+  if (matches.length !== 1) return null;
+  const { left, right } = matches[0];
+  const from = left[0].start;
+  const to = right[right.length - 1].end;
+  const cropLeft = Math.max(0, from - 6);
+  const cropTop = Math.max(0, y0 - 4);
+  const cropRight = Math.min(canvas.width, to + 7);
+  const cropBottom = Math.min(canvas.height, y1 + 5);
+  return {
+    canvas: crop(canvas, cropLeft, cropTop, cropRight - cropLeft, cropBottom - cropTop, 1),
+    leftCount: left.length
+  };
+}
+
+function digitsClock(text, leftCount) {
+  const digits = String(text || "").replace(/\D/g, "");
+  if (!leftCount || digits.length !== leftCount + 2) return null;
+  const hour = Number(digits.slice(0, leftCount));
+  const minute = Number(digits.slice(leftCount));
+  if (hour > 23 || minute > 59) return null;
+  return { hour, minute, meridiem: null };
+}
+
+async function readStatusClock(worker, full, keep) {
+  // Threshold the status crop before enlarging it. Smoothing the color photo
+  // first washes white type into the background and melts black type into a hedge.
+  const masked = recolor(fractionCrop(full, CLOCK_BAND), keep);
+  const area = masked.width * masked.height;
+  const count = inkCount(masked);
+  // A filled night scene is not a clock. Reading that mask invents a time.
+  if (count < area * 0.008 || count > area * 0.12) return null;
+  const isolated = isolateStatusTime(masked);
+  if (isolated) {
+    const text = await readText(worker, pad(scaleCanvas(isolated.canvas, 3, false)), "7", "0123456789:");
+    const clock = pickClock([text]) || digitsClock(text, isolated.leftCount);
+    if (clock) return clock;
+  }
+  const text = await readText(worker, pad(scaleCanvas(masked, 3, false)), "7", "0123456789:");
+  return pickClock([text]);
+}
+
 export async function recognizeScreenshot(source) {
   const worker = await getWorker();
   const full = await loadCanvas(source);
 
   // The phone clock is the leftmost status time. Its box stays left of the center pill,
   // which can show a second time. The box is a fraction of this screenshot.
-  const status = scaleCanvas(fractionCrop(full, CLOCK_BAND), 3, true);
-  const lightTime = await readText(worker, pad(recolor(copyCanvas(status), isLightInk)), "7", "0123456789:");
-  const darkTime = await readText(worker, pad(recolor(status, isDarkInk)), "7", "0123456789:");
-  const clock = pickClock([lightTime, darkTime]);
+  const clock = await readStatusClock(worker, full, isLightInk)
+    || await readStatusClock(worker, full, isDarkInk);
   const place = capsuleImage(full);
   const location = place ? await choosePlace(worker, place) : "";
 

@@ -819,6 +819,12 @@ button, input {
   -webkit-touch-callout: none;
 }
 
+html.dim-chrome,
+html.dim-chrome body {
+  color-scheme: dark;
+  background: #000;
+}
+
 .dim-cover {
   position: fixed;
   inset: 0;

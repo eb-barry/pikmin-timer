@@ -47,9 +47,12 @@
         <button id="uploadBtn" class="icon-btn" type="button" aria-label="上傳截圖">
           <img src="./assets/icons/open-photo.png" alt="" draggable="false">
         </button>
-        <button id="settingsBtn" class="icon-btn" type="button" aria-label="設定">
-          <img src="./assets/icons/settings.png" alt="" draggable="false">
-        </button>
+        <div class="settings-slot">
+          <button id="settingsBtn" class="icon-btn" type="button" aria-label="設定">
+            <img src="./assets/icons/settings.png" alt="" draggable="false">
+          </button>
+          <span id="appVersion" class="app-version"></span>
+        </div>
       </div>
     </header>
     <p id="reading" class="reading" hidden></p>
@@ -61,6 +64,9 @@
   </div>
   <button id="workCover" class="work-cover" type="button" hidden aria-label="回到計時">
     <img src="./assets/work-cover.jpg" alt="" draggable="false">
+  </button>
+  <button id="dimCover" class="dim-cover" type="button" hidden>
+    <span id="dimDigits" class="dim-digits" lang="en"></span>
   </button>
   <script type="module" src="./js/app.js"></script>
 </body>

@@ -6,7 +6,7 @@ export const ALARM_MS = 30 * 1000;
 export const DEFAULT_COOLDOWN_MIN = 4;
 export const JUST_TAKEN_MS = 90 * 1000;
 export const FUTURE_SLACK_MS = 2 * 60 * 1000;
-export const WAKE_WINDOW_MS = 5 * 60 * 1000;
+export const DIM_IDLE_MS = 3 * 60 * 1000;
 
 export function pad(value, width = 2) {
   return String(Math.max(0, Math.trunc(value))).padStart(width, "0");

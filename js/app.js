@@ -153,8 +153,27 @@ function noteActivity(event) {
   hideDim();
 }
 
+const restTheme = document.querySelector('meta[name="theme-color"]')?.getAttribute("content") || "#16382c";
+
+function setMeta(name, content) {
+  const current = document.querySelector(`meta[name="${name}"]`);
+  if (current?.getAttribute("content") === content) return;
+  const next = document.createElement("meta");
+  next.setAttribute("name", name);
+  next.setAttribute("content", content);
+  if (current) current.replaceWith(next);
+  else document.head.append(next);
+}
+
+function setDimChrome(active) {
+  document.documentElement.classList.toggle("dim-chrome", active);
+  setMeta("color-scheme", active ? "dark" : "light");
+  setMeta("theme-color", active ? "#000000" : restTheme);
+}
+
 function hideDim() {
   dimCover.hidden = true;
+  setDimChrome(false);
 }
 
 function alarmNeedsTheScreen() {
@@ -182,6 +201,7 @@ function syncDim(now) {
   if (dimCover.hidden) {
     if (now - lastActivityAt < dimIdleMs) return;
     dimCover.hidden = false;
+    setDimChrome(true);
   }
   paintDimDigits();
 }

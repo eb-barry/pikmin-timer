@@ -938,6 +938,106 @@ function clipStatusLine(canvas) {
   return next;
 }
 
+// A bright streak under the minutes can join the last digit to the location arrow
+// across one empty column. Cut that bridge so the arrow stays outside the crop.
+function splitBridgedRuns(canvas, runs, lineHeight, y0, y1) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const { width, height } = canvas;
+  const data = context.getImageData(0, 0, width, height).data;
+  const inkAt = (x, top, bottom) => {
+    let ink = 0;
+    for (let y = top; y <= bottom; y += 1) {
+      if (data[(y * width + x) * 4] < 80) ink += 1;
+    }
+    return ink;
+  };
+  const piece = (start, end) => {
+    const rows = new Set();
+    let x0 = -1;
+    let x1 = -1;
+    for (let x = start; x <= end; x += 1) {
+      let any = false;
+      for (let y = 0; y < height; y += 1) {
+        if (data[(y * width + x) * 4] < 80) {
+          rows.add(y);
+          any = true;
+        }
+      }
+      if (any) {
+        if (x0 < 0) x0 = x;
+        x1 = x;
+      }
+    }
+    if (x0 < 0) return null;
+    const ordered = [...rows].sort((left, right) => left - right);
+    let parts = 1;
+    for (let index = 1; index < ordered.length; index += 1) {
+      if (ordered[index] > ordered[index - 1] + 1) parts += 1;
+    }
+    return { start: x0, end: x1, y0: ordered[0], y1: ordered[ordered.length - 1], parts };
+  };
+  const splitOne = (run) => {
+    const runWidth = run.end - run.start + 1;
+    if (runWidth <= lineHeight * 1.08) return [run];
+    const top = Math.max(0, Math.floor(y0));
+    const bottom = Math.min(height - 1, Math.ceil(y1));
+    let cut = -1;
+    let least = Infinity;
+    for (let x = run.start + 1; x < run.end; x += 1) {
+      const ink = inkAt(x, top, bottom);
+      if (ink < least) {
+        least = ink;
+        cut = x;
+      }
+    }
+    if (cut < 0 || least > 1) return [run];
+    let leftEnd = cut;
+    while (leftEnd > run.start && inkAt(leftEnd, top, bottom) <= 1) leftEnd -= 1;
+    let rightStart = cut;
+    while (rightStart < run.end && inkAt(rightStart, top, bottom) <= 1) rightStart += 1;
+    const left = piece(run.start, leftEnd);
+    const right = piece(rightStart, run.end);
+    if (!left || !right) return [run];
+    if (left.end - left.start + 1 >= runWidth || right.end - right.start + 1 >= runWidth) return [run];
+    return [...splitOne(left), ...splitOne(right)];
+  };
+  return runs.flatMap(splitOne);
+}
+
+// Glare beside the last minute digit hangs below the bowl and past its right edge.
+// Drop those columns so the digit keeps the shape the reader already knows.
+function trimLowTail(canvas, run, y0, limitY) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const { width, height } = canvas;
+  const image = context.getImageData(0, 0, width, height);
+  const data = image.data;
+  const top = Math.max(0, Math.floor(y0));
+  const bottom = Math.min(height - 1, Math.floor(limitY));
+  if (bottom <= top) return run;
+  const upper = (x) => {
+    let ink = 0;
+    for (let y = top; y <= bottom; y += 1) {
+      if (data[(y * width + x) * 4] < 80) ink += 1;
+    }
+    return ink;
+  };
+  let last = run.start - 1;
+  for (let x = run.start; x <= run.end; x += 1) {
+    if (upper(x)) last = x;
+  }
+  if (last < run.start || last >= run.end) return run;
+  for (let x = last + 1; x <= run.end; x += 1) {
+    for (let y = 0; y < height; y += 1) {
+      const offset = (y * width + x) * 4;
+      data[offset] = 255;
+      data[offset + 1] = 255;
+      data[offset + 2] = 255;
+    }
+  }
+  context.putImageData(image, 0, 0);
+  return { ...run, end: last };
+}
+
 // Digits sit on either side of the two status-bar dots. Once both minute digits are
 // taken, a nearby location arrow is left outside the crop. A thin extra fragment is
 // still a split stroke, so that match is dropped and the full mask can be read.
@@ -954,10 +1054,10 @@ function matchStatusTime(canvas) {
   const y1 = median(textRuns.map((run) => run.y1));
   const lineHeight = y1 - y0 + 1;
   if (lineHeight < 8) return null;
-  const aligned = runs.filter((run) => {
+  const aligned = splitBridgedRuns(canvas, runs.filter((run) => {
     const height = run.y1 - run.y0 + 1;
     return run.y0 >= y0 - 4 && run.y1 <= y1 + 6 && height <= lineHeight * 1.35;
-  });
+  }), lineHeight, y0, y1);
   const sideOf = (colonIndex, direction) => {
     const taken = [];
     let previous = aligned[colonIndex];
@@ -990,12 +1090,20 @@ function matchStatusTime(canvas) {
   });
   if (matches.length !== 1) return null;
   const { left, right } = matches[0];
+  const bodies = [...left, ...right].filter((run) => run.y1 - run.y0 + 1 <= lineHeight * 0.8);
+  const bodyBottom = bodies.length ? Math.max(...bodies.map((run) => run.y1)) : y1;
+  const cleanHeight = bodies.length
+    ? Math.max(...bodies.map((run) => run.y1 - run.y0 + 1))
+    : lineHeight;
+  const trimmed = trimLowTail(canvas, right[right.length - 1], y0, y0 + cleanHeight * 0.58);
+  right[right.length - 1] = trimmed;
   const from = left[0].start;
-  const to = right[right.length - 1].end;
+  const to = trimmed.end;
+  const next = aligned.find((run) => run.start > to + 1);
   const cropLeft = Math.max(0, from - 6);
   const cropTop = Math.max(0, y0 - 4);
-  const cropRight = Math.min(canvas.width, to + 7);
-  const cropBottom = Math.min(canvas.height, y1 + 5);
+  const cropRight = Math.min(canvas.width, next ? Math.min(to + 7, next.start - 1) : to + 7);
+  const cropBottom = Math.min(canvas.height, Math.min(y1, bodyBottom) + 5);
   return {
     canvas: crop(canvas, cropLeft, cropTop, cropRight - cropLeft, cropBottom - cropTop, 1),
     leftCount: left.length

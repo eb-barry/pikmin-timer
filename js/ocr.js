@@ -919,14 +919,52 @@ function isStatusColon(run, lineHeight) {
   return run.parts === 2 && width <= lineHeight * 0.45 && height >= lineHeight * 0.45 && height <= lineHeight * 0.95;
 }
 
-// Digits sit on either side of the two status-bar dots. The location mark is wider
-// and stays outside the crop, so it is not read as an extra digit.
-function isolateStatusTime(canvas) {
-  const runs = statusRuns(canvas);
-  const textRuns = runs.filter((run) => {
+function textSizedRuns(canvas, runs) {
+  return runs.filter((run) => {
     const height = run.y1 - run.y0 + 1;
     return height >= canvas.height * 0.14 && height <= canvas.height * 0.34;
   });
+}
+
+// Specks above a digit fuse it with the colon into one tall run, so the dots never
+// match. Dropping ink off the text line splits that run back into the digit and the dots.
+function clipStatusLine(canvas) {
+  const textRuns = textSizedRuns(canvas, statusRuns(canvas));
+  if (textRuns.length < 2) return null;
+  const y0 = median(textRuns.map((run) => run.y0));
+  const y1 = median(textRuns.map((run) => run.y1));
+  const top = Math.max(0, Math.floor(y0 - 4));
+  const bottom = Math.min(canvas.height, Math.ceil(y1 + 6));
+  if (bottom - top < 8) return null;
+  const next = copyCanvas(canvas);
+  const context = next.getContext("2d", { willReadFrequently: true });
+  const image = context.getImageData(0, 0, next.width, next.height);
+  const data = image.data;
+  for (let y = 0; y < next.height; y += 1) {
+    if (y >= top && y < bottom) continue;
+    for (let x = 0; x < next.width; x += 1) {
+      const offset = (y * next.width + x) * 4;
+      data[offset] = 255;
+      data[offset + 1] = 255;
+      data[offset + 2] = 255;
+      data[offset + 3] = 255;
+    }
+  }
+  context.putImageData(image, 0, 0);
+  return next;
+}
+
+// Digits sit on either side of the two status-bar dots. Once both minute digits are
+// taken, a nearby location arrow is left outside the crop. A thin extra fragment is
+// still a split stroke, so that match is dropped and the full mask can be read.
+function isolateStatusTime(canvas) {
+  return matchStatusTime(canvas) || matchStatusTime(clipStatusLine(canvas));
+}
+
+function matchStatusTime(canvas) {
+  if (!canvas) return null;
+  const runs = statusRuns(canvas);
+  const textRuns = textSizedRuns(canvas, runs);
   if (textRuns.length < 3) return null;
   const y0 = median(textRuns.map((run) => run.y0));
   const y1 = median(textRuns.map((run) => run.y1));
@@ -946,7 +984,13 @@ function isolateStatusTime(canvas) {
       const width = run.end - run.start + 1;
       const height = run.y1 - run.y0 + 1;
       if (isStatusColon(run, lineHeight) || width > lineHeight * 1.08 || height > lineHeight * 1.25) break;
-      if (taken.length >= 2) return null;
+      if (taken.length >= 2) {
+        if (direction > 0) {
+          const body = median(taken.map((item) => item.end - item.start + 1));
+          if (width >= body * 0.85) break;
+        }
+        return null;
+      }
       taken.push(run);
       previous = run;
     }

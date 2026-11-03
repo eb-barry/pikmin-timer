@@ -307,8 +307,23 @@ function luminanceOf(red, green, blue) {
 // The place name is the white line inside the gray capsule. The capsule width grows
 // with the name. A ">" sits at the end of that line and is not part of the name.
 // Lights and flowers outside the capsule are ignored.
-function capsuleImage(full) {
-  const band = fractionCrop(full, PLACE_BAND);
+// A bright playground shows through a translucent pill, so the white type is no
+// longer 50 above the whole column. The relaxed pass measures that type against
+// the gray of the pill and ignores colorful flowers in the same column.
+function densestRows(rows, window) {
+  if (rows.length < 2) return rows;
+  const sorted = [...rows].sort((left, right) => left - right);
+  let best = [];
+  let start = 0;
+  for (let end = 0; end < sorted.length; end += 1) {
+    while (sorted[start] < sorted[end] - window) start += 1;
+    const chunk = sorted.slice(start, end + 1);
+    if (chunk.length > best.length) best = chunk;
+  }
+  return best;
+}
+
+function readCapsule(band, relaxed) {
   const context = band.getContext("2d", { willReadFrequently: true });
   const { width, height } = band;
   const data = context.getImageData(0, 0, width, height).data;
@@ -316,11 +331,18 @@ function capsuleImage(full) {
   const background = [];
   for (let x = 0; x < width; x += 1) {
     const column = [];
+    const gray = [];
     for (let y = 0; y < height; y += 1) {
       const pixel = at(x, y);
-      column.push(luminanceOf(data[pixel], data[pixel + 1], data[pixel + 2]));
+      const red = data[pixel];
+      const green = data[pixel + 1];
+      const blue = data[pixel + 2];
+      const luminance = luminanceOf(red, green, blue);
+      column.push(luminance);
+      if (relaxed && Math.max(red, green, blue) - Math.min(red, green, blue) < 46) gray.push(luminance);
     }
-    background.push(percentile(column, 0.35));
+    const sample = relaxed && gray.length >= Math.max(6, Math.floor(height * 0.22)) ? gray : column;
+    background.push(percentile(sample, 0.35));
   }
   const smooth = background.map((_, x) => {
     const radius = 10;
@@ -337,10 +359,38 @@ function capsuleImage(full) {
       const blue = data[pixel + 2];
       const luminance = luminanceOf(red, green, blue);
       const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
-      if (luminance > smooth[x] + 50 && chroma < 42 && luminance > 165) rows.push(y);
+      const ink = relaxed
+        ? luminance > smooth[x] + 16 && chroma < 36 && luminance > 188 && smooth[x] >= 50 && smooth[x] <= 226
+        : luminance > smooth[x] + 50 && chroma < 42 && luminance > 165;
+      if (ink) rows.push(y);
     }
     columns.push(rows);
   }
+  const assembled = assembleCapsule(band, columns, smooth, at);
+  if (!relaxed) return assembled;
+  // Bright pixels above and below a translucent pill stretch a character to the
+  // full band, and that line is then thrown out. Keep the plain mask when it
+  // already holds the name, and use the focused line when it is much wider.
+  const rowWindow = Math.max(8, Math.floor(height * 0.5));
+  const focused = columns.map((rows) => densestRows(rows, rowWindow));
+  const centers = focused.filter((rows) => rows.length >= 2).map((rows) => median(rows));
+  if (!centers.length) return assembled;
+  const line = median(centers);
+  const limit = height * 0.22;
+  const clipped = focused.map((rows) => rows.filter((y) => Math.abs(y - line) <= limit));
+  const focusedImage = assembleCapsule(band, clipped, smooth, at);
+  if (!focusedImage) return assembled;
+  if (!assembled) return focusedImage;
+  if (focusedImage.width > assembled.width * 1.12 && focusedImage.height < assembled.height * 1.85) {
+    return focusedImage;
+  }
+  return assembled;
+}
+
+function assembleCapsule(band, columns, smooth, at) {
+  const context = band.getContext("2d", { willReadFrequently: true });
+  const { width, height } = band;
+  const data = context.getImageData(0, 0, width, height).data;
   const runs = [];
   let start = -1;
   let gap = 0;
@@ -459,6 +509,48 @@ function capsuleImage(full) {
   return crop(band, left, top, right - left + 1, bottom - top + 1, 1);
 }
 
+function capsuleImage(full) {
+  const band = fractionCrop(full, PLACE_BAND);
+  const strict = readCapsule(band, false);
+  const soft = readCapsule(band, true);
+  if (!soft) return strict;
+  if (!strict) return soft;
+  // The strict mask already has the whole name on a dark pill. A wider soft
+  // mask is the rest of a long name whose gray was lifted by the playground.
+  if (soft.width > strict.width * 1.35 && soft.height < strict.height * 1.85) return soft;
+  return strict;
+}
+
+function stretchCapsule(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const { width, height } = canvas;
+  const image = context.getImageData(0, 0, width, height);
+  const data = image.data;
+  const levels = [];
+  for (let index = 0; index < data.length; index += 4) {
+    levels.push(luminanceOf(data[index], data[index + 1], data[index + 2]));
+  }
+  const low = percentile(levels, 0.42);
+  const high = percentile(levels, 0.9);
+  if (high - low >= 70) return null;
+  const next = document.createElement("canvas");
+  next.width = width;
+  next.height = height;
+  const output = next.getContext("2d").createImageData(width, height);
+  const span = Math.max(8, high - low);
+  for (let index = 0; index < data.length; index += 4) {
+    const luma = luminanceOf(data[index], data[index + 1], data[index + 2]);
+    const lifted = Math.min(1, Math.max(0, (luma - low) / span));
+    const value = Math.round(255 * (1 - lifted));
+    output.data[index] = value;
+    output.data[index + 1] = value;
+    output.data[index + 2] = value;
+    output.data[index + 3] = 255;
+  }
+  next.getContext("2d").putImageData(output, 0, 0);
+  return next;
+}
+
 function binarizeCapsule(canvas) {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   const { width, height } = canvas;
@@ -510,12 +602,16 @@ async function readLine(worker, canvas, mode, dpi) {
 
 async function choosePlace(worker, color) {
   const binary = binarizeCapsule(color);
+  const stretched = stretchCapsule(color);
   const reads = [
     await readLine(worker, color, "7", 150),
     await readLine(worker, binary, "7", 150),
     await readLine(worker, scalePad(binary, 2, 24), "7", 180),
     await readLine(worker, scalePad(color, 2, 24), "13", 96)
   ];
+  if (stretched) {
+    reads.push(await readLine(worker, scalePad(stretched, 2, 24), "7", 180));
+  }
   const ranked = reads
     .map((read) => ({ ...read, place: readPlace(read.text) }))
     .filter((read) => read.place)

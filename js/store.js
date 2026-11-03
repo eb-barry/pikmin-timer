@@ -1,5 +1,5 @@
 import { SOUNDS } from "./catalog.js";
-import { MAX_TIMERS, clampCooldown } from "./time.js";
+import { MAX_TIMERS, clampCooldown, clampDimIdle } from "./time.js";
 
 export const STORAGE_KEY = "pikmin-timer-v1";
 const SETTINGS_VERSION = 2;
@@ -9,7 +9,7 @@ export const defaultSettings = {
   soundId: "羽翅",
   cooldownMin: 4,
   cooldownSec: 0,
-  keepAwake: true,
+  dimIdleMin: 3,
   workMode: true
 };
 
@@ -23,17 +23,17 @@ export function loadState() {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
     const settings = { ...defaultSettings, ...(raw.settings || {}) };
     if (!/^floor-(0[1-9]|1[0-3])$/.test(settings.floorId)) settings.floorId = defaultSettings.floorId;
-    settings.keepAwake = Boolean(settings.keepAwake);
     settings.workMode = Boolean(settings.workMode);
     if ((Number(raw.settingsVersion) || 1) < SETTINGS_VERSION) {
       settings.soundId = defaultSettings.soundId;
       settings.cooldownMin = defaultSettings.cooldownMin;
       settings.cooldownSec = defaultSettings.cooldownSec;
       settings.workMode = defaultSettings.workMode;
-      settings.keepAwake = defaultSettings.keepAwake;
     }
+    delete settings.keepAwake;
     if (!SOUNDS.some((sound) => sound.id === settings.soundId)) settings.soundId = defaultSettings.soundId;
     Object.assign(settings, clampCooldown(settings.cooldownMin, settings.cooldownSec));
+    settings.dimIdleMin = clampDimIdle(settings.dimIdleMin);
     const timers = (Array.isArray(raw.timers) ? raw.timers : [])
       .filter(validTimer)
       .slice(0, MAX_TIMERS)

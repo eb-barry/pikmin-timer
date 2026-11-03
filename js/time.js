@@ -65,12 +65,18 @@ export function suggestAnchor({ hour, minute, meridiem = null, now }) {
 export function clampCooldown(minutes, seconds = 0) {
   const parsedMin = Number(minutes);
   if (!Number.isFinite(parsedMin)) return { cooldownMin: DEFAULT_COOLDOWN_MIN, cooldownSec: 0 };
-  const cooldownMin = Math.min(5, Math.max(1, Math.round(parsedMin)));
+  const cooldownMin = Math.min(5, Math.max(0, Math.round(parsedMin)));
   const parsedSec = Number(seconds);
   const cooldownSec = cooldownMin === 5
     ? 0
-    : Math.min(59, Math.max(0, Math.round(Number.isFinite(parsedSec) ? parsedSec : 0)));
+    : Math.min(30, Math.max(0, Math.round(Number.isFinite(parsedSec) ? parsedSec : 0)));
   return { cooldownMin, cooldownSec };
+}
+
+export function clampDimIdle(minutes) {
+  const parsed = Number(minutes);
+  if (!Number.isFinite(parsed)) return 3;
+  return Math.min(10, Math.max(1, Math.round(parsed)));
 }
 
 export function cooldownDuration(settings = {}) {

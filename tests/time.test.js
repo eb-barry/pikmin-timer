@@ -5,6 +5,7 @@ import {
   ringableOrder,
   applyReading,
   clampCooldown,
+  clampDimIdle,
   describeDraft,
   draftToRespawn,
   formatClock,
@@ -85,11 +86,21 @@ describe("screenshot clock", () => {
 });
 
 describe("cooldown", () => {
-  it("allows 1 to 4 minutes with seconds, and locks 5 minutes at 0 seconds", () => {
+  it("allows 0 to 4 minutes with up to 30 seconds, and locks 5 minutes at 0 seconds", () => {
     assert.deepEqual(clampCooldown(4, 30), { cooldownMin: 4, cooldownSec: 30 });
+    assert.deepEqual(clampCooldown(4, 45), { cooldownMin: 4, cooldownSec: 30 });
     assert.deepEqual(clampCooldown(5, 40), { cooldownMin: 5, cooldownSec: 0 });
-    assert.deepEqual(clampCooldown(0, 20), { cooldownMin: 1, cooldownSec: 20 });
+    assert.deepEqual(clampCooldown(0, 20), { cooldownMin: 0, cooldownSec: 20 });
     assert.deepEqual(clampCooldown(9, 10), { cooldownMin: 5, cooldownSec: 0 });
+  });
+
+  it("keeps the black screen delay between 1 and 10 minutes", () => {
+    assert.equal(clampDimIdle(3), 3);
+    assert.equal(clampDimIdle(undefined), 3);
+    assert.equal(clampDimIdle(0), 1);
+    assert.equal(clampDimIdle(1), 1);
+    assert.equal(clampDimIdle(10), 10);
+    assert.equal(clampDimIdle(11), 10);
   });
 });
 

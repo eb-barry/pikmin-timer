@@ -10,8 +10,8 @@ import {
   formatClock,
   formatCountdown,
   MAX_TIMERS,
-  DIM_IDLE_MS,
   clampCooldown,
+  clampDimIdle,
   cooldownDuration,
   nextTimers,
   splitBoard,
@@ -144,8 +144,13 @@ function hideWorkCover() {
   workCover.hidden = true;
 }
 
-const dimIdleMs = Number(window.__PIKMIN_DIM_IDLE_MS) > 0 ? Number(window.__PIKMIN_DIM_IDLE_MS) : DIM_IDLE_MS;
 let lastActivityAt = Date.now();
+
+function currentDimIdleMs() {
+  const override = Number(window.__PIKMIN_DIM_IDLE_MS);
+  if (override > 0) return override;
+  return clampDimIdle(state.settings.dimIdleMin) * 60 * 1000;
+}
 
 function noteActivity(event) {
   if (event.target instanceof Element && event.target.closest(".dim-cover")) return;
@@ -199,7 +204,7 @@ function syncDim(now) {
   }
   if (document.visibilityState !== "visible") return;
   if (dimCover.hidden) {
-    if (now - lastActivityAt < dimIdleMs) return;
+    if (now - lastActivityAt < currentDimIdleMs()) return;
     dimCover.hidden = false;
     setDimChrome(true);
   }
@@ -319,6 +324,7 @@ function tick() {
   paintBoard(now);
   paintEditLive();
   alarms.setOrder(playableOrder(now));
+  if (state.sheet?.type === "settings") paintPreviewButton();
   syncWakeLock();
   syncDim(now);
 }
@@ -574,42 +580,56 @@ function settingsMarkup() {
       <img src="${floorThumbUrl(floor.id)}" alt="">
       <span>${floor.label}</span>
     </button>`).join("");
-  const sounds = SOUNDS.map((sound) => `
-    <label class="sound-row">
-      <input type="radio" name="sound" value="${sound.id}" ${sound.id === settings.soundId ? "checked" : ""}>
-      <span class="sound-copy"><span class="sound-name">${sound.label}</span></span>
-      ${sound.id === "mute" ? "" : `<button type="button" class="mini" data-action="preview" data-sound="${sound.id}">試聽</button>`}
-    </label>`).join("");
+  const sounds = SOUNDS.map((sound) => {
+    const name = sound.label.replace(/\.mp3$/i, "");
+    const selected = sound.id === settings.soundId ? "selected" : "";
+    return `<option value="${escapeAttr(sound.id)}" ${selected}>${escapeAttr(name)}</option>`;
+  }).join("");
+  const minuteOptions = Array.from({ length: 6 }, (_, minute) => {
+    const selected = minute === settings.cooldownMin ? "selected" : "";
+    return `<option value="${minute}" ${selected}>${minute} 分</option>`;
+  }).join("");
+  const secondOptions = Array.from({ length: 31 }, (_, second) => {
+    const selected = second === settings.cooldownSec ? "selected" : "";
+    return `<option value="${second}" ${selected}>${second} 秒</option>`;
+  }).join("");
+  const idleOptions = Array.from({ length: 10 }, (_, index) => {
+    const minute = index + 1;
+    const selected = minute === settings.dimIdleMin ? "selected" : "";
+    return `<option value="${minute}" ${selected}>${minute} 分鐘</option>`;
+  }).join("");
   const secondsLocked = settings.cooldownMin === 5;
+  const previewLocked = settings.soundId === "mute" || Boolean(alarms.playingId());
+  const wakeHint = "wakeLock" in navigator
+    ? "幾分鐘沒有點螢幕，就蓋上黑畫面，只留深綠色倒數。這個頁面在前景時會保持亮著。"
+    : "幾分鐘沒有點螢幕，就蓋上黑畫面，只留深綠色倒數。這台瀏覽器可能無法阻止螢幕自己關掉。";
   return `
     <div class="sheet-head"><h2 id="sheetTitle">設定</h2><button type="button" data-action="close">完成</button></div>
+    <div class="settings-body">
     <p class="section-label">背景</p>
     <div class="floor-row">${floors}</div>
     <p class="section-label">響鈴</p>
     <p class="hint">所有鬧鐘共用你選的這一種。</p>
-    ${sounds}
+    <div class="setting-row">
+      <select id="soundSelect" aria-label="響鈴">${sounds}</select>
+      <button type="button" id="previewSound" data-action="preview" ${previewLocked ? "disabled" : ""}>試聽</button>
+    </div>
     <p class="section-label">冷卻時間</p>
-    <div class="cool-grid">
-      <div class="stepper">
-        <button type="button" data-action="cool" data-unit="min" data-delta="-1" aria-label="減少分鐘">−</button>
-        <strong data-part="cool-min">${settings.cooldownMin} 分</strong>
-        <button type="button" data-action="cool" data-unit="min" data-delta="1" aria-label="增加分鐘">+</button>
-      </div>
-      <div class="stepper">
-        <button type="button" data-action="cool" data-unit="sec" data-delta="-1" aria-label="減少秒數" ${secondsLocked ? "disabled" : ""}>−</button>
-        <strong data-part="cool-sec">${settings.cooldownSec} 秒</strong>
-        <button type="button" data-action="cool" data-unit="sec" data-delta="1" aria-label="增加秒數" ${secondsLocked ? "disabled" : ""}>+</button>
-      </div>
+    <div class="setting-row">
+      <select id="coolMin" aria-label="冷卻分鐘">${minuteOptions}</select>
+      <select id="coolSec" aria-label="冷卻秒數" ${secondsLocked ? "disabled" : ""}>${secondOptions}</select>
     </div>
     <p class="hint">加在蘑菇消滅剩餘時間後面。已經在倒數的鬧鐘不會改。5 分鐘時秒數固定為 0。</p>
+    <p class="section-label">節能模式啟動時間</p>
+    <div class="setting-row">
+      <select id="dimIdleMin" aria-label="節能模式啟動時間">${idleOptions}</select>
+    </div>
+    <p class="hint">${wakeHint}</p>
     <label class="switch-row">
       <span><span class="sound-name">工作模式</span><span class="hint">倒數進行中，點文字會調整鬧鐘。點文字以外的畫面會蓋上工作圖片。再點一下就回來。</span></span>
       <input id="workMode" type="checkbox" ${settings.workMode ? "checked" : ""}>
     </label>
-    <label class="switch-row">
-      <span><span class="sound-name">保持螢幕亮著</span><span class="hint">${"wakeLock" in navigator ? "這個頁面在前景時不讓螢幕自己關掉。" : "這台瀏覽器可能無法保持亮螢幕。"}</span></span>
-      <input id="keepAwake" type="checkbox" ${settings.keepAwake ? "checked" : ""}>
-    </label>`;
+    </div>`;
 }
 
 function editMarkup() {
@@ -668,17 +688,10 @@ function onSheetClick(event) {
   if (action === "close") closeSheet();
   if (action === "floor") chooseFloor(button.dataset.floor);
   if (action === "preview") {
-    const sound = SOUNDS.find((item) => item.id === button.dataset.sound);
-    if (sound) {
-      state.settings.soundId = sound.id;
-      saveState(state);
-      const radio = panel.querySelector(`input[name="sound"][value="${sound.id}"]`);
-      if (radio) radio.checked = true;
-      const url = soundUrl(sound.id);
-      if (url) alarms.preview(url)?.catch(() => {});
-    }
+    if (button.disabled || alarms.playingId()) return;
+    const url = soundUrl(state.settings.soundId);
+    if (url) alarms.preview(url)?.catch(() => {});
   }
-  if (action === "cool") changeCooldown(button.dataset.unit, Number(button.dataset.delta));
   if (action === "save-edit") saveEdit();
   if (action === "delete-edit") deleteEdit(button);
 }
@@ -691,17 +704,31 @@ function onSheetInput(event) {
 
 function onSheetChange(event) {
   const input = event.target;
-  if (!(input instanceof HTMLInputElement) || !state.sheet) return;
-  if (input.name === "sound") {
-    state.settings.soundId = input.value;
-    saveState(state);
+  if (!state.sheet) return;
+  if (input instanceof HTMLSelectElement) {
+    if (input.id === "soundSelect") {
+      state.settings.soundId = input.value;
+      saveState(state);
+      alarms.stopPreview();
+      paintPreviewButton();
+    }
+    if (input.id === "coolMin" || input.id === "coolSec") {
+      const next = clampCooldown(
+        input.id === "coolMin" ? input.value : state.settings.cooldownMin,
+        input.id === "coolSec" ? input.value : state.settings.cooldownSec
+      );
+      state.settings.cooldownMin = next.cooldownMin;
+      state.settings.cooldownSec = next.cooldownSec;
+      saveState(state);
+      paintCooldown();
+    }
+    if (input.id === "dimIdleMin") {
+      state.settings.dimIdleMin = clampDimIdle(input.value);
+      saveState(state);
+    }
+    return;
   }
-  if (input.id === "keepAwake") {
-    state.settings.keepAwake = input.checked;
-    saveState(state);
-    wakeFailed = false;
-    syncWakeLock();
-  }
+  if (!(input instanceof HTMLInputElement)) return;
   if (input.id === "workMode") {
     state.settings.workMode = input.checked;
     saveState(state);
@@ -720,24 +747,19 @@ function chooseFloor(id) {
   });
 }
 
-function changeCooldown(unit, delta) {
-  const next = clampCooldown(
-    state.settings.cooldownMin + (unit === "min" ? delta : 0),
-    state.settings.cooldownSec + (unit === "sec" ? delta : 0)
-  );
-  state.settings.cooldownMin = next.cooldownMin;
-  state.settings.cooldownSec = next.cooldownSec;
-  saveState(state);
-  paintCooldown();
+function paintCooldown() {
+  const minutes = panel.querySelector("#coolMin");
+  const seconds = panel.querySelector("#coolSec");
+  if (!minutes || !seconds) return;
+  minutes.value = String(state.settings.cooldownMin);
+  seconds.value = String(state.settings.cooldownSec);
+  seconds.disabled = state.settings.cooldownMin === 5;
 }
 
-function paintCooldown() {
-  setText(panel.querySelector("[data-part=cool-min]"), `${state.settings.cooldownMin} 分`);
-  setText(panel.querySelector("[data-part=cool-sec]"), `${state.settings.cooldownSec} 秒`);
-  const locked = state.settings.cooldownMin === 5;
-  panel.querySelectorAll("[data-unit=sec]").forEach((button) => {
-    button.disabled = locked;
-  });
+function paintPreviewButton() {
+  const button = panel.querySelector("#previewSound");
+  if (!button) return;
+  button.disabled = state.settings.soundId === "mute" || Boolean(alarms.playingId());
 }
 
 function updateEditField(input) {
@@ -800,7 +822,7 @@ let wakeFailed = false;
 let wakePending = false;
 
 async function syncWakeLock() {
-  const want = state.settings.keepAwake && document.visibilityState === "visible";
+  const want = document.visibilityState === "visible";
   if (!want) {
     if (wakeSentinel) {
       const current = wakeSentinel;
@@ -813,7 +835,7 @@ async function syncWakeLock() {
   wakePending = true;
   try {
     const sentinel = await navigator.wakeLock.request("screen");
-    if (!state.settings.keepAwake || document.visibilityState !== "visible") {
+    if (document.visibilityState !== "visible") {
       sentinel.release().catch(() => {});
       return;
     }

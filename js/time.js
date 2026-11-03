@@ -4,7 +4,6 @@
 export const MAX_TIMERS = 7;
 export const ALARM_MS = 30 * 1000;
 export const DEFAULT_COOLDOWN_MIN = 4;
-export const JUST_TAKEN_MS = 90 * 1000;
 export const FUTURE_SLACK_MS = 2 * 60 * 1000;
 export const DIM_IDLE_MS = 3 * 60 * 1000;
 
@@ -55,11 +54,9 @@ export function suggestAnchor({ hour, minute, meridiem = null, now }) {
   const past = candidates.filter((dt) => dt.getTime() <= now.getTime() + FUTURE_SLACK_MS);
   const pool = past.length ? past : candidates;
   pool.sort((a, b) => Math.abs(a.getTime() - now.getTime()) - Math.abs(b.getTime() - now.getTime()));
-  const best = pool[0];
-  if (Math.abs(best.getTime() - now.getTime()) <= JUST_TAKEN_MS) {
-    return { anchor: new Date(now.getTime()), usedNow: true };
-  }
-  return { anchor: best, usedNow: false };
+  // The status bar has no seconds, so the minute starts at :00. The upload
+  // clock is not the time in the picture, even when the shot looks recent.
+  return { anchor: pool[0], usedNow: false };
 }
 
 export function clampCooldown(minutes, seconds = 0) {
@@ -170,7 +167,9 @@ export function ringableOrder(timers, now, seenAhead) {
 }
 
 function instantOf(draft, cooldownMs) {
-  if (!draft.remainingReady) return null;
+  // Both numbers have to come from the screenshot. A missing status clock
+  // used to fall back to the upload time and shift the respawn by minutes.
+  if (!draft.remainingReady || draft.clockReady !== true) return null;
   const respawn = draftToRespawn(draft, cooldownMs);
   if (!respawn || Number.isNaN(respawn.getTime())) return null;
   return respawn.getTime();

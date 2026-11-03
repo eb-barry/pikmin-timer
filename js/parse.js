@@ -6,6 +6,14 @@ function squash(value) {
     .replace(/\s+/g, "");
 }
 
+function remainSource(text) {
+  return squash(text)
+    .replace(/小时/g, "小時")
+    .replace(/(\d)时/g, "$1時")
+    .replace(/(\d)份/g, "$1分")
+    .replace(/(\d)[杪抄妙]/g, "$1秒");
+}
+
 function clampRemain(hours, minutes, seconds) {
   return {
     hours: Math.min(99, Math.max(0, hours)),
@@ -44,7 +52,7 @@ export function parseDigitRun(digits, witness = "") {
 }
 
 export function parseRemaining(text) {
-  const source = squash(text);
+  const source = remainSource(text);
   // The countdown is the time after 剩下. Digits in front of it are the hit points.
   const marked = source.lastIndexOf("剩下");
   const at = marked >= 0 ? marked : source.lastIndexOf("剩");
@@ -60,15 +68,95 @@ export function parseRemaining(text) {
     return clampRemain(Number(hoursOpen[1]), Number(hoursOpen[2]), Number(hoursOpen[3]));
   }
   if (/小時/.test(body)) return null;
-  const minutes = body.match(/剩下(\d+)分(\d+)秒/) || body.match(/(\d+)分(\d+)秒/);
+  const minutes = body.match(/剩下(\d{1,2})分鐘?(\d{1,2})秒/) || body.match(/(\d{1,2})分鐘?(\d{1,2})秒/);
   if (minutes && /剩下|分/.test(body)) {
     return clampRemain(0, Number(minutes[1]), Number(minutes[2]));
   }
+  // The last stroke of 秒 is often missing. Keep the line only when 剩下 marks it
+  // and neither number runs on into another digit.
+  const droppedSecond = body.match(/剩下(\d{1,2})分鐘?(\d{1,2})(?!\d)/) || body.match(/^下(\d{1,2})分鐘?(\d{1,2})(?!\d)/);
+  if (droppedSecond) return clampRemain(0, Number(droppedSecond[1]), Number(droppedSecond[2]));
   const seconds = body.match(/^剩下(\d{1,2})秒$/);
   if (seconds) return clampRemain(0, 0, Number(seconds[1]));
   const english = String(text || "").match(/(\d+)\s*h(?:ours?)?\s*(\d+)\s*m(?:in(?:utes?)?)?\s*(\d+)\s*s(?:ec(?:onds?)?)?/i);
   if (english) return clampRemain(Number(english[1]), Number(english[2]), Number(english[3]));
   return null;
+}
+
+export function acceptRemaining(text) {
+  if (/[A-Za-z]{2,}/.test(String(text || ""))) return null;
+  return parseRemaining(text);
+}
+
+function remainKey(value) {
+  return `${value.hours}:${value.minutes}:${value.seconds}`;
+}
+
+function strictRemain(text) {
+  const body = remainSource(text);
+  return /剩下/.test(body) && /秒/.test(body) && (/分/.test(body) || /小時/.test(body));
+}
+
+function agreedRemain(items) {
+  if (!items.length) return null;
+  const counts = new Map();
+  items.forEach((item) => {
+    const key = remainKey(item.value);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  let bestKey = "";
+  let bestCount = 0;
+  let tied = false;
+  counts.forEach((count, key) => {
+    if (count > bestCount) {
+      bestKey = key;
+      bestCount = count;
+      tied = false;
+    } else if (count === bestCount) {
+      tied = true;
+    }
+  });
+  if (!bestKey || tied) return null;
+  return items.find((item) => remainKey(item.value) === bestKey).value;
+}
+
+function salvageLeadingNoise(text) {
+  return String(text || "").replace(/^[A-Za-z]{1,4}\s*(?=\d)/, "");
+}
+
+// Several reads of the same line have to name one destruction time. A complete
+// reading wins when those copies agree. A dropped first digit, such as 18 read
+// once as 8, is settled by the other copies instead of discarding the line.
+export function chooseRemainingRead(parts, digits = "", listed = "") {
+  const parsed = [];
+  const witness = [];
+  for (const part of parts) {
+    const text = String(part?.text || "");
+    witness.push(text);
+    let source = text;
+    let value = part?.open ? acceptRemaining(text) : parseRemaining(text);
+    if (!value && part?.open) {
+      const cleaned = salvageLeadingNoise(text);
+      if (cleaned !== text) {
+        value = parseRemaining(cleaned);
+        source = cleaned;
+      }
+    }
+    if (value) parsed.push({ text: source, value, strict: strictRemain(source) });
+  }
+  const strict = parsed.filter((item) => item.strict);
+  const fromStrict = agreedRemain(strict);
+  if (fromStrict) return fromStrict;
+  if (strict.length > 1) {
+    const fromAll = agreedRemain(parsed);
+    if (fromAll) return fromAll;
+    return null;
+  }
+  if (parsed.length) return agreedRemain(parsed);
+  const split = parseSplitDigits(listed, digits);
+  const compact = String(digits || "").replace(/\D/g, "");
+  if (compact.length !== 4) return split;
+  return split || parseDigitRun(digits, witness.join(" "));
 }
 
 export function matchClock(text) {

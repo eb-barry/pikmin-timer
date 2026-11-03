@@ -1,0 +1,21 @@
+這個倉庫不是整份都適用 CC BY-ND 4.0。各部分分開如下。
+
+CC BY-ND 4.0，著作權人 Barry（2026）
+
+只涵蓋計時器程式與使用說明：css/、js/、tests/、index.html、sw.js、manifest.webmanifest、README.md，以及 docs/皮克敏蘑菇計時-使用說明.pdf。可以原樣使用與複製。不可以散佈改過的版本。全文在 LICENSE。
+
+https://creativecommons.org/licenses/by-nd/4.0/
+
+Apache License 2.0
+
+vendor/tesseract/ 是 Tesseract.js 與其運算核心。授權全文在 vendor/tesseract/LICENSE.md。
+
+assets/tessdata/chi_tra.traineddata.gz 與 assets/tessdata/eng.traineddata.gz 是 Tesseract 的繁體中文與英文語料，同樣適用 Apache License 2.0。
+
+https://www.apache.org/licenses/LICENSE-2.0
+
+未以 CC BY-ND 4.0 授權
+
+assets/sounds/、assets/icons/、assets/clock.png、assets/floors/、assets/work-cover.jpg 不在上述授權之內。
+
+「皮克敏」這個名稱也不在 CC BY-ND 4.0 的授權範圍。

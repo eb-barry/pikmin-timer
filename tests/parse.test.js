@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { cleanLocation, matchClock, parseDigitRun, parseRemaining, parseScreenshotText, parseSplitDigits, readPlace } from "../js/parse.js";
+import { cleanLocation, chooseRemainingRead, matchClock, parseDigitRun, parseRemaining, parseScreenshotText, parseSplitDigits, readPlace } from "../js/parse.js";
 
 describe("destruction time", () => {
   it("reads the red remaining line and ignores the mushroom title", () => {
@@ -60,5 +60,36 @@ describe("destruction time", () => {
     assert.deepEqual(parseRemaining("644,051剩下1小時26分21秒"), { hours: 1, minutes: 26, seconds: 21 });
     assert.deepEqual(parseRemaining("血量 405625 剩下31分06秒"), { hours: 0, minutes: 31, seconds: 6 });
     assert.equal(parseRemaining("644,051"), null);
+    assert.deepEqual(parseRemaining("剩下57分34"), { hours: 0, minutes: 57, seconds: 34 });
+    assert.deepEqual(parseRemaining("剩下57分鐘34秒"), { hours: 0, minutes: 57, seconds: 34 });
+    assert.deepEqual(parseRemaining("下57分34"), { hours: 0, minutes: 57, seconds: 34 });
+    assert.deepEqual(parseRemaining("剩下57份34妙"), { hours: 0, minutes: 57, seconds: 34 });
+    assert.deepEqual(parseRemaining("剩下3小时2分32秒"), { hours: 3, minutes: 2, seconds: 32 });
+    assert.equal(parseRemaining("57分34"), null);
+    assert.equal(parseRemaining("剩下5734"), null);
+    const same = { hours: 0, minutes: 57, seconds: 34 };
+    assert.deepEqual(chooseRemainingRead([
+      { text: "剩下57分34秒" },
+      { text: "剩下51分34秒" }
+    ]), null);
+    assert.deepEqual(chooseRemainingRead([
+      { text: "剩下57分34秒" },
+      { text: "剩下57分34秒" },
+      { text: "剩下51分34秒" }
+    ]), same);
+    assert.deepEqual(chooseRemainingRead([
+      { text: "剩下57分34秒" },
+      { text: "57分38", open: true }
+    ]), same);
+    assert.deepEqual(chooseRemainingRead([
+      { text: "下18分32秒" },
+      { text: "MT18 分32 秒", open: true },
+      { text: "下8分32秒" },
+      { text: "剩下18分32秒" },
+      { text: "剩下8分32秒" }
+    ]), { hours: 0, minutes: 18, seconds: 32 });
+    assert.deepEqual(chooseRemainingRead([
+      { text: "剩丁", open: true }
+    ], "5734", "剩下"), same);
   });
 });

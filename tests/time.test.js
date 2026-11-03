@@ -52,10 +52,10 @@ describe("respawn math", () => {
 });
 
 describe("screenshot clock", () => {
-  it("uses the phone clock when the shot was just taken", () => {
+  it("keeps the screenshot minute when the phone is in that same minute", () => {
     const suggested = suggestAnchor({ hour: 1, minute: 18, now: at(13, 18, 40) });
-    assert.equal(suggested.usedNow, true);
-    assert.equal(formatClock(suggested.anchor), "13:18:40");
+    assert.equal(suggested.usedNow, false);
+    assert.equal(formatClock(suggested.anchor), "13:18:00");
   });
 
   it("picks 13:18 in the afternoon when the status bar says 1:18", () => {
@@ -123,6 +123,7 @@ function draft(location, ready = true) {
   return {
     location,
     remainingReady: ready,
+    clockReady: true,
     anchorDate: "2026-10-30",
     anchorTime: "13:18",
     anchorSeconds: 0,
@@ -168,6 +169,27 @@ describe("placing uploads", () => {
     assert.equal(result.timers.length, 1);
     assert.equal(result.timers[0].id, "id-0");
     assert.equal(result.timers[0].respawnAt, at(13, 18).getTime() + 60 * 60 * 1000);
+  });
+
+  it("does not use the upload clock when the status time was not read", () => {
+    const unread = draft("浮生臻品");
+    unread.clockReady = false;
+    unread.anchorTime = "14:01";
+    unread.anchorSeconds = 52;
+    unread.hours = 0;
+    unread.minutes = 57;
+    unread.seconds = 34;
+    const missed = nextTimers([], [unread], 4 * 60 * 1000, at(14, 1, 52).getTime(), () => "id");
+    assert.equal(missed.timers[0].respawnAt, null);
+    const shot = draft("浮生臻品");
+    shot.anchorTime = "13:59";
+    shot.anchorSeconds = 0;
+    shot.hours = 0;
+    shot.minutes = 57;
+    shot.seconds = 34;
+    const placed = nextTimers([], [shot], 4 * 60 * 1000, at(14, 1, 52).getTime(), () => "id");
+    assert.equal(formatClock(new Date(placed.timers[0].respawnAt)), "15:00:34");
+    assert.equal(formatCountdown(placed.timers[0].respawnAt - at(14, 1, 52).getTime()), "00:58:42");
   });
 });
 

@@ -1,5 +1,5 @@
 import Tesseract from "../vendor/tesseract/tesseract.esm.min.js";
-import { matchClock, parseDigitRun, parseRemaining, parseSplitDigits, readPlace } from "./parse.js";
+import { chooseRemainingRead, matchClock, readPlace } from "./parse.js";
 
 const { createWorker } = Tesseract;
 
@@ -820,41 +820,25 @@ function countdownBands(full) {
   }];
 }
 
-function acceptRemaining(text) {
-  if (/[A-Za-z]{2,}/.test(String(text || ""))) return null;
-  return parseRemaining(text);
-}
-
 async function readCountdown(worker, images) {
-  const listedHalf = await readText(worker, images.half, "7", "剩下小時分秒0123456789", 300);
-  const fromListedHalf = parseRemaining(listedHalf);
-  if (fromListedHalf) return fromListedHalf;
-  const halfOpen = await readText(worker, images.half, "13", "", 96);
-  const fromHalf = acceptRemaining(halfOpen);
-  if (fromHalf) return fromHalf;
-  const halfLine = await readText(worker, images.half, "7", "", 300);
-  const fromLine = acceptRemaining(halfLine);
-  if (fromLine) return fromLine;
-  const listed = await readText(worker, images.big, "7", "剩下小時分秒0123456789", 300);
-  const fromListed = parseRemaining(listed);
-  if (fromListed) return fromListed;
+  const parts = [];
+  const take = async (canvas, mode, whitelist, dpi, open) => {
+    if (!canvas) return "";
+    const text = await readText(worker, canvas, mode, whitelist, dpi);
+    parts.push({ text, open });
+    return text;
+  };
+  await take(images.half, "7", "剩下小時分秒0123456789", 300, false);
+  await take(images.half, "13", "", 96, true);
+  await take(images.half, "7", "", 300, true);
+  const listed = await take(images.big, "7", "剩下小時分秒0123456789", 300, false);
   if (images.sharp) {
-    const sharpText = await readText(worker, images.sharp, "7", "剩下小時分秒0123456789", 300);
-    const fromSharp = parseRemaining(sharpText);
-    if (fromSharp) return fromSharp;
-    const sharpBlock = await readText(worker, images.sharp, "13", "剩下小時分秒0123456789", 300);
-    const fromBlock = parseRemaining(sharpBlock);
-    if (fromBlock) return fromBlock;
+    await take(images.sharp, "7", "剩下小時分秒0123456789", 300, false);
+    await take(images.sharp, "13", "剩下小時分秒0123456789", 300, false);
   }
-  if (images.soft) {
-    const softText = await readText(worker, images.soft, "7", "剩下小時分秒0123456789", 300);
-    const fromSoft = parseRemaining(softText);
-    if (fromSoft) return fromSoft;
-  }
+  if (images.soft) await take(images.soft, "7", "剩下小時分秒0123456789", 300, false);
   const digits = await readText(worker, images.big, "7", "0123456789", 300);
-  const compact = String(digits || "").replace(/\D/g, "");
-  if (compact.length !== 4) return parseSplitDigits(listed, digits);
-  return parseSplitDigits(listed, digits) || parseDigitRun(digits, `${listed} ${halfOpen} ${halfLine}`);
+  return chooseRemainingRead(parts, digits, listed);
 }
 
 function pickClock(texts) {

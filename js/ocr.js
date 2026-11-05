@@ -80,12 +80,18 @@ function isLightInk(red, green, blue) {
   return red > 214 && green > 214 && blue > 200 && max - min < 48;
 }
 
+function darkInkAt(limit) {
+  return (red, green, blue) => {
+    const max = Math.max(red, green, blue);
+    const min = Math.min(red, green, blue);
+    // Status type is nearly black. Dark green hedge and shadow sit just above
+    // this and would fuse with the digits once the crop is enlarged.
+    return max < limit && max - min < 14;
+  };
+}
+
 function isDarkInk(red, green, blue) {
-  const max = Math.max(red, green, blue);
-  const min = Math.min(red, green, blue);
-  // Status type is nearly black. Dark green hedge and shadow sit just above
-  // this and would fuse with the digits once the crop is enlarged.
-  return max < 48 && max - min < 14;
+  return darkInkAt(48)(red, green, blue);
 }
 
 function isCountdownInk(red, green, blue) {
@@ -870,16 +876,15 @@ function statusRuns(canvas) {
     for (let x = start; x <= end; x += 1) columns[x].forEach((y) => rows.add(y));
     if (rows.size) {
       const ordered = [...rows].sort((left, right) => left - right);
-      let parts = 1;
-      for (let index = 1; index < ordered.length; index += 1) {
-        if (ordered[index] > ordered[index - 1] + 1) parts += 1;
-      }
+      const span = verticalSpan(ordered);
       runs.push({
         start,
         end,
         y0: ordered[0],
         y1: ordered[ordered.length - 1],
-        parts
+        bodyY0: span.y0,
+        bodyY1: span.y1,
+        parts: span.parts
       });
     }
     start = -1;
@@ -897,6 +902,41 @@ function statusRuns(canvas) {
   return runs;
 }
 
+// A floating speck above a digit makes the whole run look too tall to be type.
+// The digit itself is the tallest solid piece.
+function verticalSpan(ordered) {
+  let parts = 1;
+  let bodyY0 = ordered[0];
+  let bodyY1 = ordered[0];
+  let bodyLength = 1;
+  let segmentY0 = ordered[0];
+  let segmentLength = 1;
+  const keep = (y1, length) => {
+    if (length <= bodyLength) return;
+    bodyLength = length;
+    bodyY0 = segmentY0;
+    bodyY1 = y1;
+  };
+  for (let index = 1; index < ordered.length; index += 1) {
+    if (ordered[index] > ordered[index - 1] + 1) {
+      keep(ordered[index - 1], segmentLength);
+      parts += 1;
+      segmentY0 = ordered[index];
+      segmentLength = 1;
+    } else {
+      segmentLength += 1;
+    }
+  }
+  keep(ordered[ordered.length - 1], segmentLength);
+  return { y0: bodyY0, y1: bodyY1, parts };
+}
+
+function runBodyHeight(run) {
+  const y0 = Number.isFinite(run.bodyY0) ? run.bodyY0 : run.y0;
+  const y1 = Number.isFinite(run.bodyY1) ? run.bodyY1 : run.y1;
+  return y1 - y0 + 1;
+}
+
 function isStatusColon(run, lineHeight) {
   const width = run.end - run.start + 1;
   const height = run.y1 - run.y0 + 1;
@@ -905,7 +945,7 @@ function isStatusColon(run, lineHeight) {
 
 function textSizedRuns(canvas, runs) {
   return runs.filter((run) => {
-    const height = run.y1 - run.y0 + 1;
+    const height = runBodyHeight(run);
     return height >= canvas.height * 0.14 && height <= canvas.height * 0.34;
   });
 }
@@ -915,8 +955,10 @@ function textSizedRuns(canvas, runs) {
 function clipStatusLine(canvas) {
   const textRuns = textSizedRuns(canvas, statusRuns(canvas));
   if (textRuns.length < 2) return null;
-  const y0 = median(textRuns.map((run) => run.y0));
-  const y1 = median(textRuns.map((run) => run.y1));
+  // A smudge just above the glyphs is not part of the line. Clipping to the
+  // solid bodies drops it, which splits a colon that the smudge had fused to a digit.
+  const y0 = median(textRuns.map((run) => (Number.isFinite(run.bodyY0) ? run.bodyY0 : run.y0)));
+  const y1 = median(textRuns.map((run) => (Number.isFinite(run.bodyY1) ? run.bodyY1 : run.y1)));
   const top = Math.max(0, Math.floor(y0 - 4));
   const bottom = Math.min(canvas.height, Math.ceil(y1 + 6));
   if (bottom - top < 8) return null;
@@ -970,11 +1012,16 @@ function splitBridgedRuns(canvas, runs, lineHeight, y0, y1) {
     }
     if (x0 < 0) return null;
     const ordered = [...rows].sort((left, right) => left - right);
-    let parts = 1;
-    for (let index = 1; index < ordered.length; index += 1) {
-      if (ordered[index] > ordered[index - 1] + 1) parts += 1;
-    }
-    return { start: x0, end: x1, y0: ordered[0], y1: ordered[ordered.length - 1], parts };
+    const span = verticalSpan(ordered);
+    return {
+      start: x0,
+      end: x1,
+      y0: ordered[0],
+      y1: ordered[ordered.length - 1],
+      bodyY0: span.y0,
+      bodyY1: span.y1,
+      parts: span.parts
+    };
   };
   const splitOne = (run) => {
     const runWidth = run.end - run.start + 1;
@@ -1050,13 +1097,15 @@ function matchStatusTime(canvas) {
   const runs = statusRuns(canvas);
   const textRuns = textSizedRuns(canvas, runs);
   if (textRuns.length < 3) return null;
-  const y0 = median(textRuns.map((run) => run.y0));
-  const y1 = median(textRuns.map((run) => run.y1));
+  const y0 = median(textRuns.map((run) => (Number.isFinite(run.bodyY0) ? run.bodyY0 : run.y0)));
+  const y1 = median(textRuns.map((run) => (Number.isFinite(run.bodyY1) ? run.bodyY1 : run.y1)));
   const lineHeight = y1 - y0 + 1;
   if (lineHeight < 8) return null;
   const aligned = splitBridgedRuns(canvas, runs.filter((run) => {
-    const height = run.y1 - run.y0 + 1;
-    return run.y0 >= y0 - 4 && run.y1 <= y1 + 6 && height <= lineHeight * 1.35;
+    const top = Number.isFinite(run.bodyY0) ? run.bodyY0 : run.y0;
+    const bottom = Number.isFinite(run.bodyY1) ? run.bodyY1 : run.y1;
+    const height = bottom - top + 1;
+    return top >= y0 - 4 && bottom <= y1 + 6 && height <= lineHeight * 1.35;
   }), lineHeight, y0, y1);
   const sideOf = (colonIndex, direction) => {
     const taken = [];
@@ -1066,7 +1115,7 @@ function matchStatusTime(canvas) {
       const gap = direction > 0 ? run.start - previous.end - 1 : previous.start - run.end - 1;
       if (gap > lineHeight * 0.6) break;
       const width = run.end - run.start + 1;
-      const height = run.y1 - run.y0 + 1;
+      const height = runBodyHeight(run);
       if (isStatusColon(run, lineHeight) || width > lineHeight * 1.08 || height > lineHeight * 1.25) break;
       if (taken.length >= 2) {
         if (direction > 0) {
@@ -1119,6 +1168,13 @@ function digitsClock(text, leftCount) {
   return { hour, minute, meridiem: null };
 }
 
+async function readIsolatedClock(worker, masked) {
+  const isolated = isolateStatusTime(masked);
+  if (!isolated) return null;
+  const text = await readText(worker, pad(scaleCanvas(isolated.canvas, 3, false)), "7", "0123456789:");
+  return pickClock([text]) || digitsClock(text, isolated.leftCount);
+}
+
 async function readStatusClock(worker, full, keep) {
   // Threshold the status crop before enlarging it. Smoothing the color photo
   // first washes white type into the background and melts black type into a hedge.
@@ -1127,14 +1183,49 @@ async function readStatusClock(worker, full, keep) {
   const count = inkCount(masked);
   // A filled night scene is not a clock. Reading that mask invents a time.
   if (count < area * 0.008 || count > area * 0.12) return null;
-  const isolated = isolateStatusTime(masked);
-  if (isolated) {
-    const text = await readText(worker, pad(scaleCanvas(isolated.canvas, 3, false)), "7", "0123456789:");
-    const clock = pickClock([text]) || digitsClock(text, isolated.leftCount);
-    if (clock) return clock;
-  }
+  const isolated = await readIsolatedClock(worker, masked);
+  if (isolated) return isolated;
   const text = await readText(worker, pad(scaleCanvas(masked, 3, false)), "7", "0123456789:");
   return pickClock([text]);
+}
+
+function maskFraction(full, band, keep) {
+  const x0 = Math.max(0, Math.floor(full.width * band.x));
+  const y0 = Math.max(0, Math.floor(full.height * band.y));
+  const x1 = Math.min(full.width, Math.ceil(full.width * (band.x + band.w)));
+  const y1 = Math.min(full.height, Math.ceil(full.height * (band.y + band.h)));
+  const width = Math.max(1, x1 - x0);
+  const height = Math.max(1, y1 - y0);
+  const source = full.getContext("2d", { willReadFrequently: true }).getImageData(x0, y0, width, height);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const image = canvas.getContext("2d", { willReadFrequently: true }).createImageData(width, height);
+  for (let index = 0; index < source.data.length; index += 4) {
+    const ink = keep(source.data[index], source.data[index + 1], source.data[index + 2]);
+    const value = ink ? 0 : 255;
+    image.data[index] = value;
+    image.data[index + 1] = value;
+    image.data[index + 2] = value;
+    image.data[index + 3] = 255;
+  }
+  canvas.getContext("2d").putImageData(image, 0, 0);
+  return canvas;
+}
+
+// A black clock on a dark wall fills the usual mask, so that read is refused.
+// Sample the original pixels and keep only the solid black core. A time is
+// accepted only when the digits and the colon separate from the wall.
+async function readDenseDarkClock(worker, full) {
+  for (const limit of [32, 24, 16, 12]) {
+    const masked = maskFraction(full, CLOCK_BAND, darkInkAt(limit));
+    const area = masked.width * masked.height;
+    const count = inkCount(masked);
+    if (count < area * 0.008 || count > area * 0.12) continue;
+    const clock = await readIsolatedClock(worker, masked);
+    if (clock) return clock;
+  }
+  return null;
 }
 
 export async function recognizeScreenshot(source) {
@@ -1144,7 +1235,8 @@ export async function recognizeScreenshot(source) {
   // The phone clock is the leftmost status time. Its box stays left of the center pill,
   // which can show a second time. The box is a fraction of this screenshot.
   const clock = await readStatusClock(worker, full, isLightInk)
-    || await readStatusClock(worker, full, isDarkInk);
+    || await readStatusClock(worker, full, isDarkInk)
+    || await readDenseDarkClock(worker, full);
   const place = capsuleImage(full);
   const location = place ? await choosePlace(worker, place) : "";
 

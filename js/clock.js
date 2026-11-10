@@ -7,7 +7,7 @@ export function clockButton({ id, size, empty = false }) {
         <span class="digits" data-part="digits" lang="en">--:--:--</span>
         <span class="kind" data-part="kind"></span>
         <span class="end-pill" data-part="end" lang="en">--:--</span>
-        <span class="end-label">結束時間</span>
+        <span class="end-label"></span>
       </span>
     </span>
   </button>`;

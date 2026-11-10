@@ -1258,11 +1258,99 @@ export async function recognizeScreenshot(source) {
   };
 }
 
-function kindPhoto(full) {
-  const x0 = Math.max(0, Math.floor(full.width * KIND_BAND.x));
-  const y0 = Math.max(0, Math.floor(full.height * KIND_BAND.y));
-  const x1 = Math.min(full.width, Math.ceil(full.width * (KIND_BAND.x + KIND_BAND.w)));
-  const y1 = Math.min(full.height, Math.ceil(full.height * (KIND_BAND.y + KIND_BAND.h)));
+function locateKindBand(full) {
+  const { width, height } = full;
+  const data = full.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, width, height).data;
+  const step = Math.max(1, Math.floor(width / 160));
+  const whiteAt = (index) => {
+    const red = data[index];
+    const green = data[index + 1];
+    const blue = data[index + 2];
+    const max = Math.max(red, green, blue);
+    const min = Math.min(red, green, blue);
+    return min > 220 && max - min < 24;
+  };
+  const darkAt = (index) => {
+    const red = data[index];
+    const green = data[index + 1];
+    const blue = data[index + 2];
+    const max = Math.max(red, green, blue);
+    const min = Math.min(red, green, blue);
+    return max < 110 && max - min < 48;
+  };
+  let cardTop = -1;
+  let run = 0;
+  const need = Math.max(4, Math.round(height * 0.01));
+  for (let y = Math.floor(height * 0.38); y < height * 0.9; y += 1) {
+    let white = 0;
+    let seen = 0;
+    for (let x = 0; x < width; x += step) {
+      seen += 1;
+      if (whiteAt((y * width + x) * 4)) white += 1;
+    }
+    if (white > seen * 0.72) {
+      run += 1;
+      if (run >= need && cardTop < 0) cardTop = y - run + 1;
+    } else if (cardTop < 0) {
+      run = 0;
+    }
+  }
+  if (cardTop < 0) return null;
+  const lines = [];
+  let start = -1;
+  let x0 = width;
+  let x1 = -1;
+  const finish = (y) => {
+    if (start < 0) return;
+    if (y - start >= height * 0.012 && x1 > x0) lines.push({ y0: start, y1: y - 1, x0, x1 });
+    start = -1;
+    x0 = width;
+    x1 = -1;
+  };
+  const limit = Math.min(height - 1, cardTop + Math.round(height * 0.24));
+  for (let y = cardTop; y <= limit; y += 1) {
+    let dark = 0;
+    let seen = 0;
+    let left = width;
+    let right = -1;
+    for (let x = 0; x < width; x += step) {
+      seen += 1;
+      if (!darkAt((y * width + x) * 4)) continue;
+      dark += 1;
+      if (x < left) left = x;
+      if (x > right) right = x;
+    }
+    if (dark > seen * 0.012) {
+      if (start < 0) start = y;
+      if (left < x0) x0 = left;
+      if (right > x1) x1 = right;
+    } else {
+      finish(y);
+      if (lines.length >= 1) break;
+    }
+  }
+  finish(limit + 1);
+  const title = lines[0];
+  if (!title) return null;
+  const padX = width * 0.03;
+  const padY = Math.max(4, (title.y1 - title.y0) * 0.45);
+  const left = Math.max(0, title.x0 - padX);
+  const top = Math.max(0, title.y0 - padY);
+  const right = Math.min(width, title.x1 + padX);
+  const bottom = Math.min(height, title.y1 + padY);
+  return {
+    x: left / width,
+    y: top / height,
+    w: Math.max(0.05, (right - left) / width),
+    h: Math.max(0.02, (bottom - top) / height)
+  };
+}
+
+function kindPhoto(full, band) {
+  const x0 = Math.max(0, Math.floor(full.width * band.x));
+  const y0 = Math.max(0, Math.floor(full.height * band.y));
+  const x1 = Math.min(full.width, Math.ceil(full.width * (band.x + band.w)));
+  const y1 = Math.min(full.height, Math.ceil(full.height * (band.y + band.h)));
   const width = Math.max(1, x1 - x0);
   const height = Math.max(1, y1 - y0);
   const photo = full.getContext("2d", { willReadFrequently: true }).getImageData(x0, y0, width, height);
@@ -1306,7 +1394,8 @@ function cropKindInk(canvas) {
 }
 
 async function readKind(worker, full) {
-  const tight = cropKindInk(kindPhoto(full));
+  const band = locateKindBand(full) || KIND_BAND;
+  const tight = cropKindInk(kindPhoto(full, band));
   if (!tight) return "";
   await worker.setParameters({
     tessedit_pageseg_mode: "7",

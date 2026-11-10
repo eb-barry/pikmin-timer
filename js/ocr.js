@@ -1,5 +1,5 @@
 import Tesseract from "../vendor/tesseract/tesseract.esm.min.js";
-import { chooseRemainingRead, matchClock, readMushroomKind, readPlace } from "./parse.js";
+import { chooseRemainingRead, kindScaleFactor, matchClock, readMushroomKind, readPlace } from "./parse.js";
 
 const { createWorker } = Tesseract;
 
@@ -1403,8 +1403,8 @@ async function readKind(worker, full) {
     tessedit_char_blacklist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
     user_defined_dpi: "220"
   });
-  const factor = Math.max(2, Math.min(4, Math.round(168 / tight.height)));
-  const prepared = pad(scaleCanvas(tight, factor, false), 28);
+  const factor = kindScaleFactor(tight.height);
+  const prepared = pad(scaleCanvas(tight, factor, true), 28);
   const { data } = await worker.recognize(prepared);
   return readMushroomKind(data.text || "");
 }

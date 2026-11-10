@@ -238,6 +238,15 @@ export function parseScreenshotText({ text = "", lines = [], width = 1, height =
 
 const KIND_SIZES = ["巨大", "一般", "小型", "大型", "大", "小"];
 
+// The title is already large type. Stretching it toward 168px with nearest
+// neighbor splits 菇. A line this tall stays at its own size. A shorter crop
+// may grow smoothly, and only up to twice its height.
+export function kindScaleFactor(height) {
+  const px = Number(height);
+  if (!Number.isFinite(px) || px <= 0 || px >= 64) return 1;
+  return Math.min(2, 96 / px);
+}
+
 // The bold line under the photo names the mushroom that was just fought.
 // A description sentence from the next line is not that title.
 export function readMushroomKind(text) {

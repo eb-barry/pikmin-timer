@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { cleanLocation, chooseRemainingRead, matchClock, parseDigitRun, parseRemaining, parseScreenshotText, parseSplitDigits, readMushroomKind, readPlace } from "../js/parse.js";
+import { cleanLocation, chooseRemainingRead, kindScaleFactor, matchClock, parseDigitRun, parseRemaining, parseScreenshotText, parseSplitDigits, readMushroomKind, readPlace } from "../js/parse.js";
 
 describe("destruction time", () => {
   it("reads the red remaining line and ignores the mushroom title", () => {
@@ -105,5 +105,14 @@ describe("mushroom kind", () => {
     assert.equal(readMushroomKind("輝煌蘑菇僅在活動期間出現。"), "");
     assert.equal(readMushroomKind("一般 輝煌蘑菇\n輝煌蘑菇僅在活動期間出現。"), "一般 輝煌蘑菇");
     assert.equal(readMushroomKind(""), "");
+  });
+
+  it("leaves a tall title line alone and only doubles a short one", () => {
+    assert.equal(kindScaleFactor(47), 2);
+    assert.equal(kindScaleFactor(32), 2);
+    assert.equal(kindScaleFactor(80), 1);
+    assert.equal(kindScaleFactor(168), 1);
+    assert.equal(kindScaleFactor(0), 1);
+    assert.ok(Math.abs(kindScaleFactor(50) - 1.92) < 0.001);
   });
 });

@@ -366,6 +366,12 @@ function updateClock(element, timer, now, size) {
   const kindEl = element.querySelector("[data-part=kind]");
   const endEl = element.querySelector("[data-part=end]");
   const kind = String(timer.kind || "").trim();
+  const label = element.querySelector(".end-label");
+  const awaiting = timed && awaitingDelete.has(timer.id);
+  label.classList.toggle("is-delete", awaiting);
+  if (awaiting) label.dataset.action = "delete-alarm";
+  else delete label.dataset.action;
+  setText(label, awaiting ? "刪除" : "");
   place.classList.toggle("missing", !named);
   setText(place, named ? shownPlace(named, size) : "?");
   setText(kindEl, kind ? `（${kind}）` : "");
@@ -381,7 +387,6 @@ function updateClock(element, timer, now, size) {
   }
   const remaining = timer.respawnAt - now;
   const ringing = remaining <= 0;
-  const awaiting = awaitingDelete.has(timer.id);
   element.classList.toggle("is-live", true);
   element.classList.toggle("is-ringing", ringing);
   element.classList.toggle("is-soon", !ringing && remaining < 60000);
@@ -391,11 +396,6 @@ function updateClock(element, timer, now, size) {
   const end = ringing ? "重生了" : formatClock(new Date(timer.respawnAt), { seconds: size === "lg" });
   setText(digitsEl, digits);
   setText(endEl, end);
-  const label = element.querySelector(".end-label");
-  label.classList.toggle("is-delete", awaiting);
-  if (awaiting) label.dataset.action = "delete-alarm";
-  else delete label.dataset.action;
-  setText(label, awaiting ? "刪除" : "結束時間");
   const kindLabel = kind ? `${kind}，` : "";
   element.setAttribute("aria-label", awaiting
     ? `${named || "地點未辨識"}，${kindLabel}時間到，點擊刪除`

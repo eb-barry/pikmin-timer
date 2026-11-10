@@ -5,8 +5,9 @@ export function clockButton({ id, size, empty = false }) {
       <span class="face-hit">
         <span class="place"><span class="place-name" data-part="place"></span></span>
         <span class="digits" data-part="digits" lang="en">--:--:--</span>
-        <span class="end-label">結束時間</span>
+        <span class="kind" data-part="kind"></span>
         <span class="end-pill" data-part="end" lang="en">--:--</span>
+        <span class="end-label">結束時間</span>
       </span>
     </span>
   </button>`;

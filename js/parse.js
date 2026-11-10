@@ -235,3 +235,23 @@ export function parseScreenshotText({ text = "", lines = [], width = 1, height =
 
   return { location, remaining, clock };
 }
+
+const KIND_SIZES = ["巨大", "一般", "小型", "大型", "大", "小"];
+
+// The bold line under the photo names the mushroom that was just fought.
+// A description sentence from the next line is not that title.
+export function readMushroomKind(text) {
+  const lines = String(text || "").split(/[\n\r]+/).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    const han = line.replace(/[^\u4e00-\u9fff]/g, "");
+    if (!han.includes("菇") || han.length < 3 || han.length > 12) continue;
+    if (/僅|活動|出現|參加|期間|摧毀|擅長|玩具|飾品/.test(han)) continue;
+    for (const size of KIND_SIZES) {
+      if (han.startsWith(size) && han.length > size.length + 1) {
+        return `${size} ${han.slice(size.length)}`;
+      }
+    }
+    return han;
+  }
+  return "";
+}

@@ -186,6 +186,7 @@ export function nextTimers(existing, drafts, cooldownMs, now, idFor = () => "") 
       if (found) {
         found.location = location;
         if (instant != null) found.respawnAt = instant;
+        if (draft.kind) found.kind = String(draft.kind).trim();
         return;
       }
     }
@@ -196,6 +197,7 @@ export function nextTimers(existing, drafts, cooldownMs, now, idFor = () => "") 
     timers.push({
       id: idFor(index),
       location,
+      kind: String(draft.kind || "").trim(),
       respawnAt: instant,
       createdAt: now + index
     });
@@ -219,4 +221,5 @@ export function applyReading(draft, reading, now) {
     draft.usedNow = suggested.usedNow;
     draft.clockReady = true;
   }
+  if (reading.kind) draft.kind = String(reading.kind).trim();
 }

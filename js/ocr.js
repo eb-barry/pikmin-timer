@@ -1,5 +1,5 @@
 import Tesseract from "../vendor/tesseract/tesseract.esm.min.js";
-import { chooseRemainingRead, matchClock, readPlace } from "./parse.js";
+import { chooseRemainingRead, matchClock, readMushroomKind, readPlace } from "./parse.js";
 
 const { createWorker } = Tesseract;
 
@@ -68,6 +68,7 @@ async function readText(worker, canvas, mode, whitelist = "", dpi = 300) {
   await worker.setParameters({
     tessedit_pageseg_mode: mode,
     tessedit_char_whitelist: whitelist,
+    tessedit_char_blacklist: "",
     user_defined_dpi: String(dpi)
   });
   const { data } = await worker.recognize(canvas);
@@ -287,6 +288,8 @@ function enlargeLine(canvas, trim, useTextLine = true) {
 const CLOCK_BAND = { x: 0, y: 0, w: 0.28, h: 0.07 };
 const PLACE_BAND = { x: 0.08, y: 0.088, w: 0.84, h: 0.04 };
 const COUNTDOWN_BAND = { x: 0.012, y: 0.4568, w: 0.72, h: 0.0165 };
+// First bold line on the white card, under the meadow and above the description.
+const KIND_BAND = { x: 0.08, y: 0.55, w: 0.84, h: 0.055 };
 
 function fractionCrop(full, band) {
   return crop(
@@ -1239,6 +1242,7 @@ export async function recognizeScreenshot(source) {
     || await readDenseDarkClock(worker, full);
   const place = capsuleImage(full);
   const location = place ? await choosePlace(worker, place) : "";
+  const kind = await readKind(worker, full);
 
   let remaining = null;
   for (const remain of countdownBands(full)) {
@@ -1249,6 +1253,69 @@ export async function recognizeScreenshot(source) {
   return {
     location,
     remaining,
-    clock
+    clock,
+    kind
   };
+}
+
+function kindPhoto(full) {
+  const x0 = Math.max(0, Math.floor(full.width * KIND_BAND.x));
+  const y0 = Math.max(0, Math.floor(full.height * KIND_BAND.y));
+  const x1 = Math.min(full.width, Math.ceil(full.width * (KIND_BAND.x + KIND_BAND.w)));
+  const y1 = Math.min(full.height, Math.ceil(full.height * (KIND_BAND.y + KIND_BAND.h)));
+  const width = Math.max(1, x1 - x0);
+  const height = Math.max(1, y1 - y0);
+  const photo = full.getContext("2d", { willReadFrequently: true }).getImageData(x0, y0, width, height);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  canvas.getContext("2d").putImageData(photo, 0, 0);
+  return canvas;
+}
+
+function cropKindInk(canvas) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const { width, height } = canvas;
+  const data = context.getImageData(0, 0, width, height).data;
+  const ink = (index) => {
+    const max = Math.max(data[index], data[index + 1], data[index + 2]);
+    const min = Math.min(data[index], data[index + 1], data[index + 2]);
+    return max < 120 && max - min < 40;
+  };
+  let x0 = width;
+  let y0 = height;
+  let x1 = -1;
+  let y1 = -1;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4;
+      if (!ink(index)) continue;
+      if (x < x0) x0 = x;
+      if (y < y0) y0 = y;
+      if (x > x1) x1 = x;
+      if (y > y1) y1 = y;
+    }
+  }
+  if (x1 < x0) return null;
+  const margin = 8;
+  const left = Math.max(0, x0 - margin);
+  const top = Math.max(0, y0 - margin);
+  const right = Math.min(width, x1 + margin + 1);
+  const bottom = Math.min(height, y1 + margin + 1);
+  return crop(canvas, left, top, right - left, bottom - top, 1);
+}
+
+async function readKind(worker, full) {
+  const tight = cropKindInk(kindPhoto(full));
+  if (!tight) return "";
+  await worker.setParameters({
+    tessedit_pageseg_mode: "7",
+    tessedit_char_whitelist: "",
+    tessedit_char_blacklist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+    user_defined_dpi: "220"
+  });
+  const factor = Math.max(2, Math.min(4, Math.round(168 / tight.height)));
+  const prepared = pad(scaleCanvas(tight, factor, false), 28);
+  const { data } = await worker.recognize(prepared);
+  return readMushroomKind(data.text || "");
 }

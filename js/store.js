@@ -40,6 +40,7 @@ export function loadState() {
       .map((timer) => ({
         id: timer.id,
         location: timer.location.trim(),
+        kind: typeof timer.kind === "string" ? timer.kind.trim() : "",
         respawnAt: timer.respawnAt == null ? null : Number(timer.respawnAt),
         createdAt: Number(timer.createdAt) || (Number.isFinite(Number(timer.respawnAt)) ? Number(timer.respawnAt) : Date.now())
       }));

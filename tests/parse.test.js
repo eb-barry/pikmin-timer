@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { cleanLocation, chooseRemainingRead, matchClock, parseDigitRun, parseRemaining, parseScreenshotText, parseSplitDigits, readPlace } from "../js/parse.js";
+import { cleanLocation, chooseRemainingRead, matchClock, parseDigitRun, parseRemaining, parseScreenshotText, parseSplitDigits, readMushroomKind, readPlace } from "../js/parse.js";
 
 describe("destruction time", () => {
   it("reads the red remaining line and ignores the mushroom title", () => {
@@ -91,5 +91,19 @@ describe("destruction time", () => {
     assert.deepEqual(chooseRemainingRead([
       { text: "剩丁", open: true }
     ], "5734", "剩下"), same);
+  });
+});
+
+describe("mushroom kind", () => {
+  it("keeps the bold title and puts the size in front", () => {
+    assert.equal(readMushroomKind("一般 輝煌蘑菇"), "一般 輝煌蘑菇");
+    assert.equal(readMushroomKind("一般輝煌蘑菇"), "一般 輝煌蘑菇");
+    assert.equal(readMushroomKind("巨大 萬聖節蘑菇"), "巨大 萬聖節蘑菇");
+  });
+
+  it("drops the description under the title", () => {
+    assert.equal(readMushroomKind("輝煌蘑菇僅在活動期間出現。"), "");
+    assert.equal(readMushroomKind("一般 輝煌蘑菇\n輝煌蘑菇僅在活動期間出現。"), "一般 輝煌蘑菇");
+    assert.equal(readMushroomKind(""), "");
   });
 });

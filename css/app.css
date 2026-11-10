@@ -284,6 +284,21 @@ button, input {
   color: var(--ink);
 }
 
+.kind {
+  max-width: 100%;
+  min-height: 1.15em;
+  overflow: hidden;
+  color: #6e756f;
+  font-weight: 600;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clock-empty .kind {
+  display: none;
+}
+
 .end-label {
   color: var(--ink-soft);
   font-weight: 700;
@@ -321,6 +336,7 @@ button, input {
 
 .clock-lg .place,
 .clock-lg .digits,
+.clock-lg .kind,
 .clock-lg .end-label,
 .clock-lg .end-pill {
   position: absolute;
@@ -348,12 +364,20 @@ button, input {
   font-size: clamp(46.2px, 13.2vw, 74.8px);
 }
 
+.clock-lg .kind {
+  top: 69%;
+  width: 86%;
+  font-size: clamp(19.5px, 5.1vw, 24px);
+  text-align: center;
+}
+
 .clock-lg .end-label {
-  top: 69.5%;
+  top: 82.5%;
   font-size: clamp(13px, 3.4vw, 16px);
 }
 
 .clock-lg .end-label.is-delete {
+  top: 86%;
   background: #fff;
   color: #d23b3b;
   font-weight: 800;
@@ -366,7 +390,7 @@ button, input {
 }
 
 .clock-lg .end-pill {
-  top: 78.4%;
+  top: 76.5%;
   font-size: clamp(16px, 4.4vw, 22px);
   padding: 4px 14px;
 }
@@ -378,10 +402,18 @@ button, input {
   opacity: 0.72;
 }
 
-.clock-sm .face { width: 70%; }
-.clock-sm .place { font-size: clamp(12px, 3.3vw, 16px); }
-.clock-sm .digits { font-size: clamp(15px, 4.5vw, 22px); }
-.clock-sm .end-label { font-size: clamp(9px, 2.3vw, 11px); }
+.clock-sm .face {
+  top: 58%;
+  width: 88%;
+  height: 64%;
+  justify-content: flex-start;
+  gap: 1px;
+}
+.clock-sm .face-hit { width: 100%; padding: 0 1px; }
+.clock-sm .place { font-size: clamp(12px, 3.2vw, 14px); }
+.clock-sm .digits { font-size: clamp(15px, 4vw, 16px); }
+.clock-sm .kind { font-size: 11px; text-align: center; }
+.clock-sm .end-label { font-size: clamp(9px, 2.3vw, 11px); margin-top: 0; }
 .clock-sm .end-label.is-delete {
   background: #fff;
   color: #d23b3b;

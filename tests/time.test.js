@@ -214,6 +214,28 @@ describe("reading into a draft", () => {
     assert.equal(draft.remainingReady, true);
     assert.equal(draft.clockReady, true);
   });
+
+  it("stores the mushroom kind and keeps the previous one when a later read misses it", () => {
+    const first = draft("浮生臻品");
+    first.kind = "一般 輝煌蘑菇";
+    const placed = nextTimers([], [first], 0, 1000, () => "id");
+    assert.equal(placed.timers[0].kind, "一般 輝煌蘑菇");
+    const again = draft("浮生臻品");
+    const kept = nextTimers(placed.timers, [again], 0, 2000, () => "next");
+    assert.equal(kept.timers[0].kind, "一般 輝煌蘑菇");
+    const replaced = draft("浮生臻品");
+    replaced.kind = "巨大 紅色蘑菇";
+    const updated = nextTimers(kept.timers, [replaced], 0, 3000, () => "third");
+    assert.equal(updated.timers[0].kind, "巨大 紅色蘑菇");
+    const fresh = {
+      location: "",
+      remainingDirty: false,
+      anchorDirty: false,
+      locationDirty: false
+    };
+    applyReading(fresh, { kind: "一般 輝煌蘑菇" }, at(14, 6));
+    assert.equal(fresh.kind, "一般 輝煌蘑菇");
+  });
 });
 
 describe("board order", () => {

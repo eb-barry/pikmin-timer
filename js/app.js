@@ -363,9 +363,12 @@ function updateClock(element, timer, now, size) {
   const timed = Number.isFinite(timer.respawnAt);
   const place = element.querySelector("[data-part=place]");
   const digitsEl = element.querySelector("[data-part=digits]");
+  const kindEl = element.querySelector("[data-part=kind]");
   const endEl = element.querySelector("[data-part=end]");
+  const kind = String(timer.kind || "").trim();
   place.classList.toggle("missing", !named);
   setText(place, named ? shownPlace(named, size) : "?");
+  setText(kindEl, kind ? `（${kind}）` : "");
   if (!timed) {
     element.classList.add("is-live");
     element.classList.remove("is-ringing", "is-soon");
@@ -373,7 +376,7 @@ function updateClock(element, timer, now, size) {
     endEl.classList.add("missing");
     setText(digitsEl, "?");
     setText(endEl, "?");
-    element.setAttribute("aria-label", `${named || "地點未辨識"}，倒數未辨識`);
+    element.setAttribute("aria-label", `${named || "地點未辨識"}，${kind ? `${kind}，` : ""}倒數未辨識`);
     return;
   }
   const remaining = timer.respawnAt - now;
@@ -393,18 +396,21 @@ function updateClock(element, timer, now, size) {
   if (awaiting) label.dataset.action = "delete-alarm";
   else delete label.dataset.action;
   setText(label, awaiting ? "刪除" : "結束時間");
+  const kindLabel = kind ? `${kind}，` : "";
   element.setAttribute("aria-label", awaiting
-    ? `${named || "地點未辨識"}，時間到，點擊刪除`
+    ? `${named || "地點未辨識"}，${kindLabel}時間到，點擊刪除`
     : ringing
-      ? `${named || "地點未辨識"}，時間到，已重生`
-      : `${named || "地點未辨識"}，還剩 ${digits}，重生 ${end}`);
+      ? `${named || "地點未辨識"}，${kindLabel}時間到，已重生`
+      : `${named || "地點未辨識"}，${kindLabel}還剩 ${digits}，重生 ${end}`);
 }
 
 function shownPlace(name, size) {
-  if (size !== "lg") return name;
   const chars = Array.from(name);
-  if (chars.length <= 6) return name;
-  return `${chars.slice(0, 6).join("")}…`;
+  if (size === "lg") {
+    if (chars.length <= 6) return name;
+    return `${chars.slice(0, 6).join("")}…`;
+  }
+  return chars.slice(0, 5).join("");
 }
 
 function setText(element, value) {
@@ -461,6 +467,7 @@ function receiveFiles(files) {
     anchorTime: toTimeInput(now),
     anchorSeconds: now.getSeconds(),
     usedNow: true,
+    kind: "",
     remainingReady: false,
     clockReady: false,
     locationDirty: false,

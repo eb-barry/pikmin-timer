@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { cleanLocation, chooseRemainingRead, kindScaleFactor, matchClock, parseDigitRun, parseRemaining, parseScreenshotText, parseSplitDigits, readMushroomKind, readPlace } from "../js/parse.js";
+import { chooseGlyphMinute, chooseMeadowRead, cleanLocation, chooseRemainingRead, kindScaleFactor, matchClock, parseDigitRun, parseRemaining, parseScreenshotText, parseSplitDigits, readMushroomKind, readPlace } from "../js/parse.js";
 
 describe("destruction time", () => {
   it("reads the red remaining line and ignores the mushroom title", () => {
@@ -91,6 +91,26 @@ describe("destruction time", () => {
     assert.deepEqual(chooseRemainingRead([
       { text: "剩丁", open: true }
     ], "5734", "剩下"), same);
+  });
+
+  it("keeps a meadow hour line and refuses a minute digit that lost 剩下", () => {
+    assert.deepEqual(chooseMeadowRead("下1小時28分8秒"), { hours: 1, minutes: 28, seconds: 8 });
+    assert.deepEqual(chooseMeadowRead("下1小時28分8"), { hours: 1, minutes: 28, seconds: 8 });
+    assert.deepEqual(chooseMeadowRead("剩下6分47秒"), { hours: 0, minutes: 6, seconds: 47 });
+    assert.equal(chooseMeadowRead("下7分47秒"), null);
+    assert.equal(chooseMeadowRead("下6分47秒"), null);
+    assert.equal(chooseMeadowRead("下分47秒"), null);
+    assert.equal(chooseMeadowRead("47"), null);
+    assert.equal(chooseMeadowRead("下3228分8"), null);
+    assert.equal(chooseMeadowRead("剩下小時28分8秒"), null);
+  });
+
+  it("keeps a glyph minute only when the seconds are two digits", () => {
+    assert.deepEqual(chooseGlyphMinute("6分47"), { hours: 0, minutes: 6, seconds: 47 });
+    assert.deepEqual(chooseGlyphMinute("6分47秒"), { hours: 0, minutes: 6, seconds: 47 });
+    assert.equal(chooseGlyphMinute("6分7"), null);
+    assert.equal(chooseGlyphMinute("下7分47秒"), null);
+    assert.equal(chooseGlyphMinute("647"), null);
   });
 });
 

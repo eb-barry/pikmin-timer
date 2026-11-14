@@ -1,5 +1,5 @@
 import Tesseract from "../vendor/tesseract/tesseract.esm.min.js";
-import { chooseRemainingRead, kindScaleFactor, matchClock, readMushroomKind, readPlace } from "./parse.js";
+import { chooseGlyphMinute, chooseMeadowRead, chooseRemainingRead, kindScaleFactor, matchClock, readMushroomKind, readPlace } from "./parse.js";
 
 const { createWorker } = Tesseract;
 
@@ -1231,6 +1231,178 @@ async function readDenseDarkClock(worker, full) {
   return null;
 }
 
+// Glyph cores of the countdown sit just under the hit points, about 45.9% to 47.1%
+// of the screen. On a bright meadow those strokes are only a little brighter than
+// the daisies, so the pure-white mask used above breaks them into specks.
+const MEADOW_BAND = { y: 0.4588, h: 0.0122 };
+
+function meadowBright(red, green, blue, minimum) {
+  const min = Math.min(red, green, blue);
+  const max = Math.max(red, green, blue);
+  return min >= minimum && max - min < 55;
+}
+
+function meadowBox(full) {
+  const { width, height } = full;
+  const data = full.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, width, height).data;
+  const y0 = Math.round(height * MEADOW_BAND.y);
+  const rows = Math.max(10, Math.round(height * MEADOW_BAND.h));
+  const y1 = Math.min(height, y0 + rows);
+  const lineHeight = y1 - y0;
+  if (lineHeight < 8) return null;
+  let last = 0;
+  let seen = 0;
+  let gap = 0;
+  const gapLimit = Math.max(8, Math.round(width * 0.017));
+  const started = Math.round(width * 0.05);
+  const limit = Math.round(width * 0.5);
+  for (let x = 0; x < limit; x += 1) {
+    let ink = 0;
+    for (let y = y0; y < y1; y += 1) {
+      const index = (y * width + x) * 4;
+      if (meadowBright(data[index], data[index + 1], data[index + 2], 186)) ink += 1;
+    }
+    if (ink >= 2) {
+      seen += 1;
+      gap = 0;
+      last = x;
+    } else if (seen > started) {
+      gap += 1;
+      if (gap >= gapLimit) break;
+    }
+  }
+  if (seen < 12) return null;
+  return {
+    y0,
+    lineHeight,
+    cropWidth: Math.min(limit, last + Math.max(2, Math.round(width * 0.006)))
+  };
+}
+
+function meadowLine(full, box) {
+  const { width } = full;
+  const data = full.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, width, full.height).data;
+  const masked = document.createElement("canvas");
+  masked.width = box.cropWidth;
+  masked.height = box.lineHeight;
+  const image = masked.getContext("2d").createImageData(box.cropWidth, box.lineHeight);
+  for (let y = 0; y < box.lineHeight; y += 1) {
+    for (let x = 0; x < box.cropWidth; x += 1) {
+      const index = ((box.y0 + y) * width + x) * 4;
+      const value = meadowBright(data[index], data[index + 1], data[index + 2], 186) ? 0 : 255;
+      const pixel = (y * box.cropWidth + x) * 4;
+      image.data[pixel] = value;
+      image.data[pixel + 1] = value;
+      image.data[pixel + 2] = value;
+      image.data[pixel + 3] = 255;
+    }
+  }
+  masked.getContext("2d").putImageData(image, 0, 0);
+  const factor = Math.max(3, Math.round(72 / box.lineHeight));
+  const enlarged = scaleCanvas(masked, factor, true);
+  const context = enlarged.getContext("2d", { willReadFrequently: true });
+  const pixels = context.getImageData(0, 0, enlarged.width, enlarged.height);
+  for (let index = 0; index < pixels.data.length; index += 4) {
+    const value = pixels.data[index] < 180 ? 0 : 255;
+    pixels.data[index] = value;
+    pixels.data[index + 1] = value;
+    pixels.data[index + 2] = value;
+  }
+  context.putImageData(pixels, 0, 0);
+  return pad(enlarged, 24);
+}
+
+function meadowGlyphCanvas(source, box, x0, x1) {
+  const width = x1 - x0;
+  const canvas = document.createElement("canvas");
+  const factor = 4;
+  const padAmount = 18;
+  canvas.width = width * factor + padAmount * 2;
+  canvas.height = box.lineHeight * factor + padAmount * 2;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(source, x0, 0, width, box.lineHeight, padAmount, padAmount, width * factor, box.lineHeight * factor);
+  return canvas;
+}
+
+// A short meadow line can be doubled and split. A digit is kept only when two
+// page modes agree, and 分 is taken from the tight stroke so a daisy cannot
+// turn 6 into 7 inside one long line.
+async function readMeadowGlyphs(worker, full, box) {
+  if (box.lineHeight >= 18) return null;
+  const doubled = scaleCanvas(full, 2, true);
+  const scaled = {
+    y0: Math.round(doubled.height * MEADOW_BAND.y),
+    lineHeight: Math.max(20, Math.round(doubled.height * MEADOW_BAND.h)),
+    cropWidth: box.cropWidth * 2
+  };
+  if (scaled.y0 + scaled.lineHeight > doubled.height) return null;
+  const { width } = doubled;
+  const data = doubled.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, width, doubled.height).data;
+  const mask = document.createElement("canvas");
+  mask.width = scaled.cropWidth;
+  mask.height = scaled.lineHeight;
+  const image = mask.getContext("2d").createImageData(scaled.cropWidth, scaled.lineHeight);
+  const ink = new Uint8Array(scaled.cropWidth * scaled.lineHeight);
+  for (let y = 0; y < scaled.lineHeight; y += 1) {
+    for (let x = 0; x < scaled.cropWidth; x += 1) {
+      const index = ((scaled.y0 + y) * width + x) * 4;
+      const on = meadowBright(data[index], data[index + 1], data[index + 2], 180);
+      ink[y * scaled.cropWidth + x] = on ? 1 : 0;
+      const pixel = (y * scaled.cropWidth + x) * 4;
+      const value = on ? 0 : 255;
+      image.data[pixel] = value;
+      image.data[pixel + 1] = value;
+      image.data[pixel + 2] = value;
+      image.data[pixel + 3] = 255;
+    }
+  }
+  mask.getContext("2d").putImageData(image, 0, 0);
+  const spans = [];
+  let start = -1;
+  for (let x = 0; x <= scaled.cropWidth; x += 1) {
+    let column = 0;
+    if (x < scaled.cropWidth) {
+      for (let y = 0; y < scaled.lineHeight; y += 1) column += ink[y * scaled.cropWidth + x];
+    }
+    if (x < scaled.cropWidth && column >= 2 && start < 0) start = x;
+    if ((x === scaled.cropWidth || column < 2) && start >= 0) {
+      if (x - start >= 10) spans.push([start, x]);
+      start = -1;
+    }
+  }
+  const notes = [];
+  for (const [from, to] of spans) {
+    const word = (await readText(
+      worker,
+      meadowGlyphCanvas(mask, scaled, from, to),
+      "7",
+      "剩下小時分秒0123456789",
+      110
+    )).replace(/\s+/g, "");
+    const looseFrom = Math.max(0, from - 3);
+    const looseTo = Math.min(scaled.cropWidth, to + 3);
+    const loose = meadowGlyphCanvas(mask, scaled, looseFrom, looseTo);
+    const first = (await readText(worker, loose, "10", "0123456789", 110)).replace(/\s+/g, "");
+    const second = (await readText(worker, loose, "7", "0123456789", 110)).replace(/\s+/g, "");
+    const center = (from + to) / 2;
+    if (/^[剩下分秒時小下]$/.test(word)) notes.push({ x: center, text: word });
+    if (/^[0-9]$/.test(first) && first === second) notes.push({ x: center, text: first });
+  }
+  notes.sort((left, right) => left.x - right.x);
+  return chooseGlyphMinute(notes.map((note) => note.text).join(""));
+}
+
+async function readMeadowCountdown(worker, full) {
+  const box = meadowBox(full);
+  if (!box) return null;
+  const text = await readText(worker, meadowLine(full, box), "7", "剩下小時分秒0123456789", 220);
+  return chooseMeadowRead(text) || await readMeadowGlyphs(worker, full, box);
+}
+
 export async function recognizeScreenshot(source) {
   const worker = await getWorker();
   const full = await loadCanvas(source);
@@ -1249,6 +1421,7 @@ export async function recognizeScreenshot(source) {
     remaining = await readCountdown(worker, remain);
     if (remaining) break;
   }
+  if (!remaining) remaining = await readMeadowCountdown(worker, full);
 
   return {
     location,

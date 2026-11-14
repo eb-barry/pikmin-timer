@@ -159,6 +159,29 @@ export function chooseRemainingRead(parts, digits = "", listed = "") {
   return split || parseDigitRun(digits, witness.join(" "));
 }
 
+// A meadow fallback can read an hour line after the pure-white mask has already
+// failed. A minute digit painted on a daisy flips when the crop moves a few
+// pixels, so that fallback may keep a minute line only when 剩下 is still present.
+export function chooseMeadowRead(text) {
+  const body = remainSource(text);
+  const value = parseRemaining(text);
+  if (!value) return null;
+  if (/小時/.test(body) && /分/.test(body)) return value;
+  if (/剩下/.test(body) && /秒/.test(body)) return value;
+  return null;
+}
+
+// Glyphs read one at a time can name a minute line the whole-line reader splits
+// into 6 or 7. Only a minutes mark plus a two-digit second group is kept.
+export function chooseGlyphMinute(text) {
+  const matched = remainSource(text).match(/^(\d{1,2})分(\d{2})秒?$/);
+  if (!matched) return null;
+  const minutes = Number(matched[1]);
+  const seconds = Number(matched[2]);
+  if (minutes > 59 || seconds > 59) return null;
+  return { hours: 0, minutes, seconds };
+}
+
 export function matchClock(text) {
   const source = String(text || "").trim().replace(/[oO]/g, "0");
   if (!source) return null;

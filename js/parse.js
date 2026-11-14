@@ -72,9 +72,11 @@ export function parseRemaining(text) {
   if (minutes && /剩下|分/.test(body)) {
     return clampRemain(0, Number(minutes[1]), Number(minutes[2]));
   }
-  // The last stroke of 秒 is often missing. Keep the line only when 剩下 marks it
-  // and neither number runs on into another digit.
-  const droppedSecond = body.match(/剩下(\d{1,2})分鐘?(\d{1,2})(?!\d)/) || body.match(/^下(\d{1,2})分鐘?(\d{1,2})(?!\d)/);
+  // The last stroke of 秒 is often missing. A line that still has 剩下 can keep a
+  // one-digit second. A line that has already lost 剩 cannot: "下5分6" is what
+  // 59分56 becomes after both anchors and one digit from each number fall off,
+  // and that fragment must not be stored as the countdown.
+  const droppedSecond = body.match(/剩下(\d{1,2})分鐘?(\d{1,2})(?!\d)/) || body.match(/^下(\d{1,2})分鐘?(\d{2})(?!\d)/);
   if (droppedSecond) return clampRemain(0, Number(droppedSecond[1]), Number(droppedSecond[2]));
   const seconds = body.match(/^剩下(\d{1,2})秒$/);
   if (seconds) return clampRemain(0, 0, Number(seconds[1]));
@@ -227,6 +229,56 @@ export function readPlace(text) {
   if (REJECT.test(cleaned)) return "";
   if (matchClock(cleaned)) return "";
   return cleaned;
+}
+
+function oneCharacterApart(left, right) {
+  if (left.length !== right.length) return -1;
+  let index = -1;
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] === right[i]) continue;
+    if (index >= 0) return -1;
+    index = i;
+  }
+  return index;
+}
+
+// Several reads of one pill. A two-character fragment such as 也六 must not beat
+// a longer name from another pass. A binarized pass drops the thin strokes of a
+// complex character and then reports the simpler character with higher
+// confidence (臻 read as 至). When the two strings differ by that one character
+// and the confidences are close, keep the heavier character.
+export function choosePlaceName(reads, weightOf = () => 0) {
+  const pool = [];
+  (reads || []).forEach((read) => {
+    const place = readPlace(read?.place || read?.text);
+    const confidence = Number(read?.confidence) || 0;
+    if (!place) return;
+    const found = pool.find((item) => item.place === place);
+    if (!found) pool.push({ place, confidence });
+    else if (confidence > found.confidence) found.confidence = confidence;
+  });
+  if (!pool.length) return "";
+  const longest = pool.reduce((max, read) => Math.max(max, read.place.length), 0);
+  const credible = pool.some((read) => read.place.length === longest && read.confidence >= 40);
+  const kept = pool.filter((read) => !credible || longest - read.place.length < 2);
+  kept.sort((left, right) => right.confidence - left.confidence);
+  const leader = kept[0];
+  let chosen = leader;
+  let chosenInk = 0;
+  let chosenIndex = -1;
+  kept.forEach((rival) => {
+    if (leader.confidence - rival.confidence > 40) return;
+    const index = oneCharacterApart(leader.place, rival.place);
+    if (index < 0 || (chosenIndex >= 0 && index !== chosenIndex)) return;
+    const leaderInk = weightOf(leader.place[index]);
+    const rivalInk = weightOf(rival.place[index]);
+    if (leaderInk <= 0 || rivalInk < leaderInk * 1.12) return;
+    if (rivalInk <= chosenInk) return;
+    chosen = rival;
+    chosenInk = rivalInk;
+    chosenIndex = index;
+  });
+  return chosen.place;
 }
 
 export function parseScreenshotText({ text = "", lines = [], width = 1, height = 1 } = {}) {

@@ -1,5 +1,5 @@
 import Tesseract from "../vendor/tesseract/tesseract.esm.min.js";
-import { chooseGlyphMinute, chooseMeadowRead, chooseRemainingRead, kindScaleFactor, matchClock, readMushroomKind, readPlace } from "./parse.js";
+import { chooseGlyphMinute, chooseMeadowRead, choosePlaceName, chooseRemainingRead, kindScaleFactor, matchClock, readMushroomKind } from "./parse.js";
 
 const { createWorker } = Tesseract;
 
@@ -609,23 +609,49 @@ async function readLine(worker, canvas, mode, dpi) {
   };
 }
 
+const inkCache = new Map();
+
+// Stroke count is not in the page, so a complex character is the one that
+// paints more ink. Binarizing 臻 leaves 至, and the simpler glyph then scores
+// higher. The ink of the one disagreeing character tells those two apart.
+function characterInk(char) {
+  if (inkCache.has(char)) return inkCache.get(char);
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, 64, 64);
+  context.fillStyle = "#000000";
+  context.font = "52px 'WenQuanYi Micro Hei', 'Droid Sans Fallback', sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(char, 32, 34);
+  const data = context.getImageData(0, 0, 64, 64).data;
+  let count = 0;
+  for (let index = 0; index < data.length; index += 4) {
+    if (data[index] < 128) count += 1;
+  }
+  inkCache.set(char, count);
+  return count;
+}
+
 async function choosePlace(worker, color) {
   const binary = binarizeCapsule(color);
   const stretched = stretchCapsule(color);
+  // A short pill stays in the size where a complex character splits into a
+  // simpler one. Read the color image again, smoothed up toward a title-sized
+  // line, so the full name is in the pool even when the native pass fragments it.
+  const factor = color.height >= 72 ? 1 : Math.min(4, 96 / Math.max(1, color.height));
   const reads = [
     await readLine(worker, color, "7", 150),
     await readLine(worker, binary, "7", 150),
     await readLine(worker, scalePad(binary, 2, 24), "7", 180),
     await readLine(worker, scalePad(color, 2, 24), "13", 96)
   ];
-  if (stretched) {
-    reads.push(await readLine(worker, scalePad(stretched, 2, 24), "7", 180));
-  }
-  const ranked = reads
-    .map((read) => ({ ...read, place: readPlace(read.text) }))
-    .filter((read) => read.place)
-    .sort((left, right) => right.confidence - left.confidence);
-  return ranked[0]?.place || "";
+  if (factor > 1.05) reads.push(await readLine(worker, scalePad(color, factor, 24), "7", 180));
+  if (stretched) reads.push(await readLine(worker, scalePad(stretched, 2, 24), "7", 180));
+  return choosePlaceName(reads, characterInk);
 }
 
 function countdownWidth(full) {

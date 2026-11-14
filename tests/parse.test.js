@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { chooseGlyphMinute, chooseMeadowRead, cleanLocation, chooseRemainingRead, kindScaleFactor, matchClock, parseDigitRun, parseRemaining, parseScreenshotText, parseSplitDigits, readMushroomKind, readPlace } from "../js/parse.js";
+import { chooseGlyphMinute, chooseMeadowRead, choosePlaceName, cleanLocation, chooseRemainingRead, kindScaleFactor, matchClock, parseDigitRun, parseRemaining, parseScreenshotText, parseSplitDigits, readMushroomKind, readPlace } from "../js/parse.js";
 
 describe("destruction time", () => {
   it("reads the red remaining line and ignores the mushroom title", () => {
@@ -63,6 +63,8 @@ describe("destruction time", () => {
     assert.deepEqual(parseRemaining("剩下57分34"), { hours: 0, minutes: 57, seconds: 34 });
     assert.deepEqual(parseRemaining("剩下57分鐘34秒"), { hours: 0, minutes: 57, seconds: 34 });
     assert.deepEqual(parseRemaining("下57分34"), { hours: 0, minutes: 57, seconds: 34 });
+    assert.deepEqual(parseRemaining("下6分47"), { hours: 0, minutes: 6, seconds: 47 });
+    assert.equal(parseRemaining("下5分6"), null);
     assert.deepEqual(parseRemaining("剩下57份34妙"), { hours: 0, minutes: 57, seconds: 34 });
     assert.deepEqual(parseRemaining("剩下3小时2分32秒"), { hours: 3, minutes: 2, seconds: 32 });
     assert.equal(parseRemaining("57分34"), null);
@@ -111,6 +113,57 @@ describe("destruction time", () => {
     assert.equal(chooseGlyphMinute("6分7"), null);
     assert.equal(chooseGlyphMinute("下7分47秒"), null);
     assert.equal(chooseGlyphMinute("647"), null);
+  });
+});
+
+describe("place name", () => {
+  const weight = (char) => ({
+    臻: 2334,
+    至: 1938,
+    主: 1482,
+    大: 1288,
+    太: 1354
+  })[char] || 0;
+
+  it("does not let a short confident fragment replace a longer name", () => {
+    assert.equal(choosePlaceName([
+      { text: "也六", confidence: 92 },
+      { text: "“浮生臻品", confidence: 51 }
+    ], weight), "浮生臻品");
+  });
+
+  it("keeps a real two-character name when nothing longer was read", () => {
+    assert.equal(choosePlaceName([
+      { text: "也六", confidence: 92 },
+      { text: "浮生臻品", confidence: 20 }
+    ], weight), "也六");
+    assert.equal(choosePlaceName([{ text: "公園", confidence: 80 }], weight), "公園");
+  });
+
+  it("keeps the heavier character when a thinner copy scores higher", () => {
+    assert.equal(choosePlaceName([
+      { text: "浮生臻品", confidence: 51 },
+      { text: "浮生至品", confidence: 67 },
+      { text: "浮生主品", confidence: 54 }
+    ], weight), "浮生臻品");
+    assert.equal(choosePlaceName([
+      { text: "浮生臻品", confidence: 84 },
+      { text: "浮生至品", confidence: 69 }
+    ], weight), "浮生臻品");
+  });
+
+  it("does not replace 大 with the slightly heavier 太", () => {
+    assert.equal(choosePlaceName([
+      { text: "大樓藝術裝置", confidence: 95 },
+      { text: "太樓藝術裝置", confidence: 89 }
+    ], weight), "大樓藝術裝置");
+  });
+
+  it("returns nothing when every read is rejected", () => {
+    assert.equal(choosePlaceName([
+      { text: "參加", confidence: 80 },
+      { text: "SEA", confidence: 70 }
+    ], weight), "");
   });
 });
 

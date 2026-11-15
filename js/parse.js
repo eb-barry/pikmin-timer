@@ -173,6 +173,34 @@ export function chooseMeadowRead(text) {
   return null;
 }
 
+function minutePair(text) {
+  const body = remainSource(text);
+  const matched = body.match(/(\d{2})分(\d{2})/);
+  if (!matched) return null;
+  const minutes = Number(matched[1]);
+  const seconds = Number(matched[2]);
+  if (minutes > 59 || seconds > 59) return null;
+  return { hours: 0, minutes, seconds, marked: /秒/.test(body) };
+}
+
+// One page mode often drops 剩 while the other still has it. A minute line with
+// no 剩 is kept only when both modes name the same two-digit minutes and seconds,
+// so a single flipped digit such as 6 read as 7 cannot get through. One of the
+// two reads must still contain 秒, so a bare digit run cannot confirm the pair.
+export function chooseMeadowPair(first, second) {
+  return chooseMeadowRead(first)
+    || chooseMeadowRead(second)
+    || agreedMinute(first, second);
+}
+
+function agreedMinute(first, second) {
+  const left = minutePair(first);
+  const right = minutePair(second);
+  if (!left || !right || (!left.marked && !right.marked)) return null;
+  if (left.minutes !== right.minutes || left.seconds !== right.seconds) return null;
+  return { hours: 0, minutes: left.minutes, seconds: left.seconds };
+}
+
 // Glyphs read one at a time can name a minute line the whole-line reader splits
 // into 6 or 7. Only a minutes mark plus a two-digit second group is kept.
 export function chooseGlyphMinute(text) {

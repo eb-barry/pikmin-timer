@@ -1,5 +1,5 @@
 import Tesseract from "../vendor/tesseract/tesseract.esm.min.js";
-import { chooseGlyphMinute, chooseMeadowRead, choosePlaceName, chooseRemainingRead, kindScaleFactor, matchClock, readMushroomKind } from "./parse.js";
+import { chooseGlyphMinute, chooseMeadowPair, choosePlaceName, chooseRemainingRead, kindScaleFactor, matchClock, readMushroomKind } from "./parse.js";
 
 const { createWorker } = Tesseract;
 
@@ -1401,22 +1401,52 @@ async function readMeadowGlyphs(worker, full, box) {
     }
   }
   const notes = [];
+  const missed = [];
+  const digitWidths = [];
   for (const [from, to] of spans) {
-    const word = (await readText(
-      worker,
-      meadowGlyphCanvas(mask, scaled, from, to),
-      "7",
-      "剩下小時分秒0123456789",
-      110
-    )).replace(/\s+/g, "");
+    const tight = meadowGlyphCanvas(mask, scaled, from, to);
+    const word = (await readText(worker, tight, "7", "剩下小時分秒0123456789", 110)).replace(/\s+/g, "");
     const looseFrom = Math.max(0, from - 3);
     const looseTo = Math.min(scaled.cropWidth, to + 3);
     const loose = meadowGlyphCanvas(mask, scaled, looseFrom, looseTo);
     const first = (await readText(worker, loose, "10", "0123456789", 110)).replace(/\s+/g, "");
     const second = (await readText(worker, loose, "7", "0123456789", 110)).replace(/\s+/g, "");
     const center = (from + to) / 2;
-    if (/^[剩下分秒時小下]$/.test(word)) notes.push({ x: center, text: word });
-    if (/^[0-9]$/.test(first) && first === second) notes.push({ x: center, text: first });
+    const spanWidth = to - from;
+    if (/^[剩下分秒時小下]$/.test(word)) {
+      if (/^[分秒時]$/.test(word)) notes.push({ x: center, text: word });
+      continue;
+    }
+    if (/^[0-9]$/.test(first) && first === second) {
+      notes.push({ x: center, text: first });
+      digitWidths.push(spanWidth);
+      continue;
+    }
+    if (first || second) continue;
+    const tightDigit = (await readText(worker, tight, "10", "0123456789", 110)).replace(/\s+/g, "");
+    if (/^[0-9]$/.test(word) && word === tightDigit) {
+      notes.push({ x: center, text: word });
+      digitWidths.push(spanWidth);
+      continue;
+    }
+    missed.push({ x: center, canvas: tight, width: spanWidth });
+  }
+  notes.sort((left, right) => left.x - right.x);
+  const joined = notes.map((note) => note.text).join("");
+  if (chooseGlyphMinute(joined)) return chooseGlyphMinute(joined);
+  const typical = digitWidths.length ? median(digitWidths) : 0;
+  if (missed.length && typical) {
+    await worker.reinitialize("eng");
+    try {
+      for (const item of missed) {
+        if (item.width < typical * 0.6 || item.width > typical * 1.45) continue;
+        const eight = (await readText(worker, item.canvas, "8", "0123456789", 96)).replace(/\s+/g, "");
+        const thirteen = (await readText(worker, item.canvas, "13", "0123456789", 96)).replace(/\s+/g, "");
+        if (/^[0-9]$/.test(eight) && eight === thirteen) notes.push({ x: item.x, text: eight });
+      }
+    } finally {
+      await worker.reinitialize("chi_tra+eng");
+    }
   }
   notes.sort((left, right) => left.x - right.x);
   return chooseGlyphMinute(notes.map((note) => note.text).join(""));
@@ -1425,8 +1455,10 @@ async function readMeadowGlyphs(worker, full, box) {
 async function readMeadowCountdown(worker, full) {
   const box = meadowBox(full);
   if (!box) return null;
-  const text = await readText(worker, meadowLine(full, box), "7", "剩下小時分秒0123456789", 220);
-  return chooseMeadowRead(text) || await readMeadowGlyphs(worker, full, box);
+  const line = meadowLine(full, box);
+  const text = await readText(worker, line, "7", "剩下小時分秒0123456789", 220);
+  const alternate = await readText(worker, line, "13", "剩下小時分秒0123456789", 220);
+  return chooseMeadowPair(text, alternate) || await readMeadowGlyphs(worker, full, box);
 }
 
 export async function recognizeScreenshot(source) {

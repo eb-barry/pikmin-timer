@@ -42,6 +42,7 @@ export function loadState() {
         location: timer.location.trim(),
         kind: typeof timer.kind === "string" ? timer.kind.trim() : "",
         respawnAt: timer.respawnAt == null ? null : Number(timer.respawnAt),
+        estimated: timer.estimated === true,
         createdAt: Number(timer.createdAt) || (Number.isFinite(Number(timer.respawnAt)) ? Number(timer.respawnAt) : Date.now())
       }));
     if ((Number(raw.settingsVersion) || 1) < SETTINGS_VERSION) {

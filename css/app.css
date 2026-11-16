@@ -316,6 +316,11 @@ button, input {
   color: #d23b3b;
 }
 
+.digits.is-estimated,
+.end-pill.is-estimated {
+  color: #d25a00;
+}
+
 .clock-lg .face {
   inset: 0;
   width: 100%;
@@ -950,6 +955,10 @@ html.dim-chrome body {
   line-height: 1;
   pointer-events: none;
   white-space: nowrap;
+}
+
+.dim-digits.is-estimated {
+  color: #ff9a3c;
 }
 
 @media (min-width: 720px) {

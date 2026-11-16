@@ -16,8 +16,7 @@ import {
   shiftAnchor,
   splitBoard,
   suggestAnchor,
-  toggleMeridiem,
-  UPLOAD_SKEW_MINUTES
+  toggleMeridiem
 } from "../js/time.js";
 
 const at = (h, m, s = 0, day = 30) => new Date(2026, 9, day, h, m, s);
@@ -207,8 +206,7 @@ describe("placing uploads", () => {
     assert.equal(formatClock(new Date(cleared.timers[0].respawnAt)), "15:00:34");
   });
 
-  it("drops a status clock that is more than 3 minutes from the upload", () => {
-    assert.equal(UPLOAD_SKEW_MINUTES, 3);
+  it("keeps a read phone clock when the upload is more than 3 minutes away", () => {
     const fresh = draft("名人鄉村小公園");
     fresh.uploadedAt = at(13, 21, 40).getTime();
     const accepted = nextTimers([], [fresh], 4 * 60 * 1000, fresh.uploadedAt, () => "fresh");
@@ -217,19 +215,20 @@ describe("placing uploads", () => {
 
     const late = draft("名人鄉村小公園");
     late.uploadedAt = at(13, 22, 0).getTime();
-    const rejected = nextTimers([], [late], 4 * 60 * 1000, late.uploadedAt, () => "late");
-    assert.equal(rejected.timers[0].respawnAt, null);
-    assert.equal(rejected.timers[0].estimated, false);
+    const keptLate = nextTimers([], [late], 4 * 60 * 1000, late.uploadedAt, () => "late");
+    assert.equal(formatClock(new Date(keptLate.timers[0].respawnAt)), "14:22:00");
+    assert.equal(keptLate.timers[0].estimated, false);
 
     const earlier = draft("青潭河濱公園遊樂設施");
     earlier.uploadedAt = at(13, 14, 0).getTime();
-    const tooEarly = nextTimers([], [earlier], 4 * 60 * 1000, earlier.uploadedAt, () => "early");
-    assert.equal(tooEarly.timers[0].respawnAt, null);
+    const keptEarly = nextTimers([], [earlier], 4 * 60 * 1000, earlier.uploadedAt, () => "early");
+    assert.equal(formatClock(new Date(keptEarly.timers[0].respawnAt)), "14:22:00");
+    assert.equal(keptEarly.timers[0].estimated, false);
 
-    const kept = nextTimers(accepted.timers, [late], 4 * 60 * 1000, late.uploadedAt, () => "again");
-    assert.equal(kept.timers.length, 1);
-    assert.equal(kept.timers[0].id, "fresh");
-    assert.equal(formatClock(new Date(kept.timers[0].respawnAt)), "14:22:00");
+    const unread = draft("青潭河濱公園遊樂設施", false);
+    unread.uploadedAt = at(13, 14, 0).getTime();
+    const blank = nextTimers([], [unread], 4 * 60 * 1000, unread.uploadedAt, () => "blank");
+    assert.equal(blank.timers[0].respawnAt, null);
   });
 });
 

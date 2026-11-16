@@ -6,9 +6,6 @@ export const ALARM_MS = 30 * 1000;
 export const DEFAULT_COOLDOWN_MIN = 4;
 export const FUTURE_SLACK_MS = 2 * 60 * 1000;
 export const DIM_IDLE_MS = 3 * 60 * 1000;
-// The status bar and the upload are both read as whole minutes. A wider gap
-// means the shot sat too long before upload, so that reading is not used.
-export const UPLOAD_SKEW_MINUTES = 3;
 
 export function pad(value, width = 2) {
   return String(Math.max(0, Math.trunc(value))).padStart(width, "0");
@@ -169,32 +166,12 @@ export function ringableOrder(timers, now, seenAhead) {
   return alarmOrder(timers, now).filter((id) => seen.has(id));
 }
 
-function anchorMillis(draft) {
-  const [year, month, day] = String(draft.anchorDate || "").split("-").map(Number);
-  const [hours, minutes] = String(draft.anchorTime || "").split(":").map(Number);
-  const seconds = Number(draft.anchorSeconds) || 0;
-  if (![year, month, day, hours, minutes].every((n) => Number.isFinite(n))) return null;
-  const anchor = new Date(year, month - 1, day, hours, minutes, seconds, 0);
-  return Number.isNaN(anchor.getTime()) ? null : anchor.getTime();
-}
-
-function clockMatchesUpload(draft) {
-  // No recognized status clock means there is nothing to compare. The upload
-  // minute can still stand in, and the face marks that estimate in orange.
-  if (draft.clockReady !== true || !Number.isFinite(Number(draft.uploadedAt))) return true;
-  const anchor = anchorMillis(draft);
-  if (anchor == null) return false;
-  const gap = Math.abs(Math.floor(anchor / 60000) - Math.floor(Number(draft.uploadedAt) / 60000));
-  return gap <= UPLOAD_SKEW_MINUTES;
-}
-
 function instantOf(draft, cooldownMs) {
-  // The destruction countdown still has to be read. A missing status clock uses
-  // the upload minute already stored on the draft. A status clock more than
-  // three minutes from that upload is left unknown, so a late upload cannot
-  // move the respawn.
+  // The destruction countdown still has to be read. The phone clock in the
+  // picture is the anchor when it was read, including when the photo is
+  // uploaded later: that clock does not move just because the upload waited.
+  // A missing phone clock uses the upload minute already stored on the draft.
   if (!draft.remainingReady) return null;
-  if (!clockMatchesUpload(draft)) return null;
   if (draft.clockReady !== true && draft.usedNow !== true) return null;
   const respawn = draftToRespawn(draft, cooldownMs);
   if (!respawn || Number.isNaN(respawn.getTime())) return null;

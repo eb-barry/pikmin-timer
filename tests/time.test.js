@@ -16,7 +16,8 @@ import {
   shiftAnchor,
   splitBoard,
   suggestAnchor,
-  toggleMeridiem
+  toggleMeridiem,
+  UPLOAD_SKEW_MINUTES
 } from "../js/time.js";
 
 const at = (h, m, s = 0, day = 30) => new Date(2026, 9, day, h, m, s);
@@ -199,10 +200,36 @@ describe("placing uploads", () => {
     assert.equal(formatClock(new Date(placed.timers[0].respawnAt)), "15:00:34");
     assert.equal(formatCountdown(placed.timers[0].respawnAt - at(14, 1, 52).getTime()), "00:58:42");
     assert.equal(placed.timers[0].estimated, false);
+    shot.uploadedAt = at(14, 1, 52).getTime();
     const cleared = nextTimers(estimated.timers, [shot], 4 * 60 * 1000, at(14, 1, 52).getTime(), () => "next");
     assert.equal(cleared.timers[0].id, "id");
     assert.equal(cleared.timers[0].estimated, false);
     assert.equal(formatClock(new Date(cleared.timers[0].respawnAt)), "15:00:34");
+  });
+
+  it("drops a status clock that is more than 3 minutes from the upload", () => {
+    assert.equal(UPLOAD_SKEW_MINUTES, 3);
+    const fresh = draft("名人鄉村小公園");
+    fresh.uploadedAt = at(13, 21, 40).getTime();
+    const accepted = nextTimers([], [fresh], 4 * 60 * 1000, fresh.uploadedAt, () => "fresh");
+    assert.equal(formatClock(new Date(accepted.timers[0].respawnAt)), "14:22:00");
+    assert.equal(accepted.timers[0].estimated, false);
+
+    const late = draft("名人鄉村小公園");
+    late.uploadedAt = at(13, 22, 0).getTime();
+    const rejected = nextTimers([], [late], 4 * 60 * 1000, late.uploadedAt, () => "late");
+    assert.equal(rejected.timers[0].respawnAt, null);
+    assert.equal(rejected.timers[0].estimated, false);
+
+    const earlier = draft("青潭河濱公園遊樂設施");
+    earlier.uploadedAt = at(13, 14, 0).getTime();
+    const tooEarly = nextTimers([], [earlier], 4 * 60 * 1000, earlier.uploadedAt, () => "early");
+    assert.equal(tooEarly.timers[0].respawnAt, null);
+
+    const kept = nextTimers(accepted.timers, [late], 4 * 60 * 1000, late.uploadedAt, () => "again");
+    assert.equal(kept.timers.length, 1);
+    assert.equal(kept.timers[0].id, "fresh");
+    assert.equal(formatClock(new Date(kept.timers[0].respawnAt)), "14:22:00");
   });
 });
 

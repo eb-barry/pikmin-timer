@@ -471,6 +471,7 @@ function receiveFiles(files) {
     anchorDate: toDateInput(now),
     anchorTime: toTimeInput(now),
     anchorSeconds: now.getSeconds(),
+    uploadedAt: now.getTime(),
     usedNow: true,
     kind: "",
     remainingReady: false,

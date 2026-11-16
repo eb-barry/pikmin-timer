@@ -95,6 +95,38 @@ describe("destruction time", () => {
     ], "5734", "剩下"), same);
   });
 
+  it("keeps 4分42 when 秒 is read as one extra digit", () => {
+    const four = { hours: 0, minutes: 4, seconds: 42 };
+    assert.deepEqual(chooseRemainingRead([
+      { text: "4分42" }
+    ], "4424", "4分42"), four);
+    assert.deepEqual(parseSplitDigits("4分42", "4424"), four);
+    assert.deepEqual(parseSplitDigits("剩下4分", "4424"), four);
+    assert.deepEqual(chooseRemainingRead([
+      { text: "6分47" }
+    ], "6474", "6分47"), { hours: 0, minutes: 6, seconds: 47 });
+    assert.deepEqual(chooseRemainingRead([
+      { text: "10分55" }
+    ], "1055", "10分55"), { hours: 0, minutes: 10, seconds: 55 });
+    assert.deepEqual(chooseRemainingRead([
+      { text: "1分05" }
+    ], "1055", "1分05"), { hours: 0, minutes: 10, seconds: 55 });
+    assert.deepEqual(chooseRemainingRead([
+      { text: "44分24" }
+    ], "4424", "44分24"), { hours: 0, minutes: 44, seconds: 24 });
+    assert.deepEqual(parseSplitDigits("44分", "4424"), { hours: 0, minutes: 44, seconds: 24 });
+    assert.deepEqual(parseSplitDigits("31分", "3106"), { hours: 0, minutes: 31, seconds: 6 });
+    assert.equal(chooseRemainingRead([
+      { text: "4分42" },
+      { text: "44分24" }
+    ], "4424", "4分42"), null);
+    assert.deepEqual(chooseRemainingRead([
+      { text: "剩丁", open: true }
+    ], "5734", "剩下"), { hours: 0, minutes: 57, seconds: 34 });
+    assert.deepEqual(parseRemaining("剩下4分42秒"), four);
+    assert.deepEqual(parseDigitRun("4424", "剩下"), { hours: 0, minutes: 44, seconds: 24 });
+  });
+
   it("keeps a meadow hour line and refuses a minute digit that lost 剩下", () => {
     assert.deepEqual(chooseMeadowRead("下1小時28分8秒"), { hours: 1, minutes: 28, seconds: 8 });
     assert.deepEqual(chooseMeadowRead("下1小時28分8"), { hours: 1, minutes: 28, seconds: 8 });

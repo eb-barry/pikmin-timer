@@ -22,8 +22,41 @@ function clampRemain(hours, minutes, seconds) {
   };
 }
 
+// "4分42秒" loses 秒 in one pass and the digit pass reads that 秒 as one more
+// number, so the digits are 4424. Splitting those four digits as minutes and
+// seconds stores 44:24. The 分 that is still in the text is the split to keep.
+// A leftover that repeats the last second digit is not that stray 秒: "1分05"
+// against digits 1055 is a 10分55 line that lost a doubled digit, and the four
+// digits stay the minutes and seconds.
+function fenAnchored(text, digits) {
+  const han = remainSource(text);
+  if (/小時/.test(han) || !/分/.test(han)) return null;
+  const compact = String(digits || "").replace(/\D/g, "");
+  const marked = han.match(/(\d{1,2})分(\d{2})(?!\d)/);
+  if (marked) {
+    const minutes = Number(marked[1]);
+    const seconds = Number(marked[2]);
+    if (minutes > 59 || seconds > 59) return null;
+    const body = marked[1] + marked[2];
+    if (!compact.startsWith(body)) return null;
+    const extra = compact.slice(body.length);
+    if (extra.length > 1) return null;
+    if (extra.length === 1 && extra === marked[2].slice(-1)) return null;
+    return clampRemain(0, minutes, seconds);
+  }
+  const headOnly = han.match(/(?:^|[^\d])(\d)分(?!\d)/);
+  if (!headOnly || !compact.startsWith(headOnly[1])) return null;
+  const rest = compact.slice(1);
+  if (!/^\d{3}$/.test(rest)) return null;
+  const seconds = Number(rest.slice(0, 2));
+  if (seconds > 59 || rest[2] === rest[1]) return null;
+  return clampRemain(0, Number(headOnly[1]), seconds);
+}
+
 export function parseSplitDigits(listed, digits) {
   if (parseRemaining(listed)) return null;
+  const anchored = fenAnchored(listed, digits);
+  if (anchored) return anchored;
   const han = squash(listed);
   if (/小時/.test(han) || !/分/.test(han)) return null;
   const head = han.match(/(\d+)/);
@@ -155,6 +188,18 @@ export function chooseRemainingRead(parts, digits = "", listed = "") {
     return null;
   }
   if (parsed.length) return agreedRemain(parsed);
+  const anchored = [];
+  const seen = new Set();
+  for (const text of [listed, ...(parts || []).map((part) => part?.text)]) {
+    const value = fenAnchored(text, digits);
+    if (!value) continue;
+    const key = remainKey(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    anchored.push(value);
+  }
+  if (anchored.length === 1) return anchored[0];
+  if (anchored.length > 1) return null;
   const split = parseSplitDigits(listed, digits);
   const compact = String(digits || "").replace(/\D/g, "");
   if (compact.length !== 4) return split;

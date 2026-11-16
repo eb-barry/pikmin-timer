@@ -26,16 +26,35 @@ function getWorker() {
   return workerPromise;
 }
 
-async function loadCanvas(source) {
+// The destruction line sits at a fixed fraction of the battle screen. Cut that
+// strip from the original screenshot before the rest of the photo is reduced.
+const COUNTDOWN_STRIP = { x: 0, y: 0.456, w: 0.7, h: 0.028 };
+
+function cropBitmap(bitmap, band) {
+  const x = Math.max(0, Math.floor(bitmap.width * band.x));
+  const y = Math.max(0, Math.floor(bitmap.height * band.y));
+  const width = Math.max(1, Math.min(bitmap.width - x, Math.ceil(bitmap.width * band.w)));
+  const height = Math.max(1, Math.min(bitmap.height - y, Math.ceil(bitmap.height * band.h)));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.imageSmoothingEnabled = false;
+  context.drawImage(bitmap, x, y, width, height, 0, 0, width, height);
+  return canvas;
+}
+
+async function loadShot(source) {
   const bitmap = await createImageBitmap(source);
+  const countdown = cropBitmap(bitmap, COUNTDOWN_STRIP);
   const maxEdge = 2400;
   const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  const full = document.createElement("canvas");
+  full.width = Math.max(1, Math.round(bitmap.width * scale));
+  full.height = Math.max(1, Math.round(bitmap.height * scale));
+  full.getContext("2d").drawImage(bitmap, 0, 0, full.width, full.height);
   bitmap.close?.();
-  return canvas;
+  return { full, countdown };
 }
 
 function crop(source, x, y, width, height, factor = 1) {
@@ -810,6 +829,111 @@ function clipCountdown(canvas) {
   return crop(canvas, 0, 0, Math.max(8, flowerAt), height, 1);
 }
 
+function growSharp(canvas) {
+  // The original line is already large on a phone screenshot. A short copy
+  // grows by whole pixels, without the gray edge a smooth enlargement adds.
+  const target = 96;
+  const factor = canvas.height >= 64 ? 1 : Math.min(4, Math.ceil(target / Math.max(1, canvas.height)));
+  return factor > 1 ? scaleCanvas(canvas, factor, false) : canvas;
+}
+
+function hardenCountdown(canvas) {
+  const scaled = growSharp(canvas);
+  if (scaled === canvas) return pad(scaled, 28);
+  const context = scaled.getContext("2d", { willReadFrequently: true });
+  const image = context.getImageData(0, 0, scaled.width, scaled.height);
+  const data = image.data;
+  for (let index = 0; index < data.length; index += 4) {
+    const value = data[index] < 128 ? 0 : 255;
+    data[index] = value;
+    data[index + 1] = value;
+    data[index + 2] = value;
+    data[index + 3] = 255;
+  }
+  context.putImageData(image, 0, 0);
+  return pad(scaled, 28);
+}
+
+function cropCountdownLine(strip) {
+  const context = strip.getContext("2d", { willReadFrequently: true });
+  const { width, height } = strip;
+  const data = context.getImageData(0, 0, width, height).data;
+  const columns = [];
+  for (let x = 0; x < width; x += 1) {
+    let ink = 0;
+    for (let y = 0; y < height; y += 1) {
+      const index = (y * width + x) * 4;
+      const red = data[index];
+      const green = data[index + 1];
+      const blue = data[index + 2];
+      const max = Math.max(red, green, blue);
+      const min = Math.min(red, green, blue);
+      if (min >= 188 && max - min < 58) ink += 1;
+    }
+    columns.push(ink >= 2);
+  }
+  const gapLimit = Math.max(6, Math.round(width * 0.02));
+  const runs = [];
+  let start = -1;
+  let gap = 0;
+  const close = (end) => {
+    if (start < 0) return;
+    runs.push({ start, end, width: end - start + 1 });
+    start = -1;
+  };
+  columns.forEach((ink, x) => {
+    if (ink) {
+      if (start < 0) start = x;
+      gap = 0;
+    } else if (start >= 0) {
+      gap += 1;
+      if (gap > gapLimit) close(x - gap);
+    }
+  });
+  close(width - 1);
+  const candidates = runs.filter((run) => run.start < width * 0.35 && run.width > width * 0.08);
+  const best = (candidates.length ? candidates : runs).reduce((winner, run) => (
+    !winner || run.width > winner.width ? run : winner
+  ), null);
+  if (!best || best.width < 8) return strip;
+  const margin = Math.max(4, Math.round(height * 0.2));
+  const left = Math.max(0, best.start - margin);
+  const cropWidth = Math.min(width - left, best.end - left + margin * 2);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, cropWidth);
+  canvas.height = height;
+  const next = canvas.getContext("2d", { willReadFrequently: true });
+  next.imageSmoothingEnabled = false;
+  next.drawImage(strip, left, 0, cropWidth, height, 0, 0, cropWidth, height);
+  return canvas;
+}
+
+function prepareNativeCountdown(strip) {
+  const line = cropCountdownLine(strip);
+  const strict = recolor(copyCanvas(line), isWhiteInk);
+  const masked = inkCount(strict) >= 30 ? strict : recolor(copyCanvas(line), isCountdownInk);
+  return {
+    color: pad(growSharp(line), 24),
+    mask: inkCount(masked) >= 30 ? hardenCountdown(masked) : null
+  };
+}
+
+async function readNativeCountdown(worker, images) {
+  if (!images) return null;
+  const parts = [];
+  const take = async (canvas, mode, whitelist) => {
+    if (!canvas) return "";
+    const text = await readText(worker, canvas, mode, whitelist, 300);
+    parts.push({ text, open: false });
+    return text;
+  };
+  const listed = await take(images.mask, "7", "剩下小時分秒0123456789");
+  await take(images.mask, "13", "剩下小時分秒0123456789");
+  await take(images.color, "7", "剩下小時分秒0123456789");
+  const digits = await take(images.mask, "7", "0123456789");
+  return chooseRemainingRead(parts, digits, listed);
+}
+
 function maskedCountdown(native) {
   const strict = recolor(copyCanvas(native), isWhiteInk);
   const masked = inkCount(strict) >= 40 ? strict : recolor(native, isCountdownInk);
@@ -1463,7 +1587,7 @@ async function readMeadowCountdown(worker, full) {
 
 export async function recognizeScreenshot(source) {
   const worker = await getWorker();
-  const full = await loadCanvas(source);
+  const { full, countdown } = await loadShot(source);
 
   // The phone clock is the leftmost status time. Its box stays left of the center pill,
   // which can show a second time. The box is a fraction of this screenshot.
@@ -1474,10 +1598,12 @@ export async function recognizeScreenshot(source) {
   const location = place ? await choosePlace(worker, place) : "";
   const kind = await readKind(worker, full);
 
-  let remaining = null;
-  for (const remain of countdownBands(full)) {
-    remaining = await readCountdown(worker, remain);
-    if (remaining) break;
+  let remaining = await readNativeCountdown(worker, prepareNativeCountdown(countdown));
+  if (!remaining) {
+    for (const remain of countdownBands(full)) {
+      remaining = await readCountdown(worker, remain);
+      if (remaining) break;
+    }
   }
   if (!remaining) remaining = await readMeadowCountdown(worker, full);
 

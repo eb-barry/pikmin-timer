@@ -1598,7 +1598,12 @@ export async function recognizeScreenshot(source) {
   const location = place ? await choosePlace(worker, place) : "";
   const kind = await readKind(worker, full);
 
-  let remaining = await readNativeCountdown(worker, prepareNativeCountdown(countdown));
+  let remaining = null;
+  try {
+    remaining = await readNativeCountdown(worker, prepareNativeCountdown(countdown));
+  } catch (error) {
+    console.warn(error);
+  }
   if (!remaining) {
     for (const remain of countdownBands(full)) {
       remaining = await readCountdown(worker, remain);

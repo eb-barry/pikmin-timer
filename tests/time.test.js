@@ -171,16 +171,24 @@ describe("placing uploads", () => {
     assert.equal(result.timers[0].respawnAt, at(13, 18).getTime() + 60 * 60 * 1000);
   });
 
-  it("does not use the upload clock when the status time was not read", () => {
+  it("uses the upload time when the status clock was not read", () => {
     const unread = draft("浮生臻品");
     unread.clockReady = false;
+    unread.usedNow = true;
     unread.anchorTime = "14:01";
     unread.anchorSeconds = 52;
     unread.hours = 0;
     unread.minutes = 57;
     unread.seconds = 34;
-    const missed = nextTimers([], [unread], 4 * 60 * 1000, at(14, 1, 52).getTime(), () => "id");
-    assert.equal(missed.timers[0].respawnAt, null);
+    const estimated = nextTimers([], [unread], 4 * 60 * 1000, at(14, 1, 52).getTime(), () => "id");
+    assert.equal(formatClock(new Date(estimated.timers[0].respawnAt)), "15:03:26");
+    assert.equal(estimated.timers[0].estimated, true);
+    const noDuration = draft("青潭河濱公園遊樂設施");
+    noDuration.remainingReady = false;
+    noDuration.clockReady = false;
+    noDuration.usedNow = true;
+    const stillBlank = nextTimers([], [noDuration], 4 * 60 * 1000, at(14, 1, 52).getTime(), () => "id");
+    assert.equal(stillBlank.timers[0].respawnAt, null);
     const shot = draft("浮生臻品");
     shot.anchorTime = "13:59";
     shot.anchorSeconds = 0;
@@ -190,6 +198,11 @@ describe("placing uploads", () => {
     const placed = nextTimers([], [shot], 4 * 60 * 1000, at(14, 1, 52).getTime(), () => "id");
     assert.equal(formatClock(new Date(placed.timers[0].respawnAt)), "15:00:34");
     assert.equal(formatCountdown(placed.timers[0].respawnAt - at(14, 1, 52).getTime()), "00:58:42");
+    assert.equal(placed.timers[0].estimated, false);
+    const cleared = nextTimers(estimated.timers, [shot], 4 * 60 * 1000, at(14, 1, 52).getTime(), () => "next");
+    assert.equal(cleared.timers[0].id, "id");
+    assert.equal(cleared.timers[0].estimated, false);
+    assert.equal(formatClock(new Date(cleared.timers[0].respawnAt)), "15:00:34");
   });
 });
 

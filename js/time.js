@@ -167,12 +167,18 @@ export function ringableOrder(timers, now, seenAhead) {
 }
 
 function instantOf(draft, cooldownMs) {
-  // Both numbers have to come from the screenshot. A missing status clock
-  // used to fall back to the upload time and shift the respawn by minutes.
-  if (!draft.remainingReady || draft.clockReady !== true) return null;
+  // The destruction time still has to be read. A missing status clock uses the
+  // upload minute already stored on the draft, and that clock is marked so the
+  // face can show it in orange.
+  if (!draft.remainingReady) return null;
+  if (draft.clockReady !== true && draft.usedNow !== true) return null;
   const respawn = draftToRespawn(draft, cooldownMs);
   if (!respawn || Number.isNaN(respawn.getTime())) return null;
   return respawn.getTime();
+}
+
+function fromUpload(draft) {
+  return draft.clockReady !== true;
 }
 
 export function nextTimers(existing, drafts, cooldownMs, now, idFor = () => "") {
@@ -185,7 +191,10 @@ export function nextTimers(existing, drafts, cooldownMs, now, idFor = () => "") 
       const found = timers.find((timer) => timer.location.trim() === location);
       if (found) {
         found.location = location;
-        if (instant != null) found.respawnAt = instant;
+        if (instant != null) {
+          found.respawnAt = instant;
+          found.estimated = fromUpload(draft);
+        }
         if (draft.kind) found.kind = String(draft.kind).trim();
         return;
       }
@@ -199,6 +208,7 @@ export function nextTimers(existing, drafts, cooldownMs, now, idFor = () => "") 
       location,
       kind: String(draft.kind || "").trim(),
       respawnAt: instant,
+      estimated: instant != null && fromUpload(draft),
       createdAt: now + index
     });
   });

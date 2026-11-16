@@ -189,6 +189,7 @@ function paintDimDigits() {
   const source = board.querySelector(".clock-lg [data-part=digits]");
   const text = source?.textContent || "";
   setText(dimDigits, text);
+  dimDigits.classList.toggle("is-estimated", Boolean(source?.classList.contains("is-estimated")));
   dimCover.setAttribute("aria-label", text ? `倒數 ${text}，點一下回到畫面` : "點一下回到畫面");
   if (!source) return;
   const box = source.getBoundingClientRect();
@@ -375,6 +376,9 @@ function updateClock(element, timer, now, size) {
   place.classList.toggle("missing", !named);
   setText(place, named ? shownPlace(named, size) : "?");
   setText(kindEl, kind ? `（${kind}）` : "");
+  const estimated = timed && timer.estimated === true;
+  digitsEl.classList.toggle("is-estimated", estimated);
+  endEl.classList.toggle("is-estimated", estimated);
   if (!timed) {
     element.classList.add("is-live");
     element.classList.remove("is-ringing", "is-soon");
@@ -397,11 +401,12 @@ function updateClock(element, timer, now, size) {
   setText(digitsEl, digits);
   setText(endEl, end);
   const kindLabel = kind ? `${kind}，` : "";
+  const estimatedLabel = estimated ? "依上傳時間計算，" : "";
   element.setAttribute("aria-label", awaiting
-    ? `${named || "地點未辨識"}，${kindLabel}時間到，點擊刪除`
+    ? `${named || "地點未辨識"}，${kindLabel}${estimatedLabel}時間到，點擊刪除`
     : ringing
-      ? `${named || "地點未辨識"}，${kindLabel}時間到，已重生`
-      : `${named || "地點未辨識"}，${kindLabel}還剩 ${digits}，重生 ${end}`);
+      ? `${named || "地點未辨識"}，${kindLabel}${estimatedLabel}時間到，已重生`
+      : `${named || "地點未辨識"}，${kindLabel}${estimatedLabel}還剩 ${digits}，重生 ${end}`);
 }
 
 function shownPlace(name, size) {
@@ -803,6 +808,7 @@ function saveEdit() {
   const duration = durationFrom(view);
   timer.location = location;
   timer.respawnAt = duration == null ? null : Date.now() + duration;
+  timer.estimated = false;
   saveState(state);
   closeSheet();
   paintBoard(Date.now(), true);

@@ -70,6 +70,12 @@ export function clampCooldown(minutes, seconds = 0) {
   return { cooldownMin, cooldownSec };
 }
 
+// An alarm on this page has to stay in the foreground, or the phone can sleep
+// and the ringtone never starts. An empty board can sleep.
+export function shouldHoldWakeLock(timerCount, visibility) {
+  return Number(timerCount) > 0 && visibility === "visible";
+}
+
 export function clampDimIdle(minutes) {
   const parsed = Number(minutes);
   if (!Number.isFinite(parsed)) return 3;

@@ -12,6 +12,7 @@ import {
   MAX_TIMERS,
   clampCooldown,
   clampDimIdle,
+  shouldHoldWakeLock,
   cooldownDuration,
   nextTimers,
   splitBoard,
@@ -91,10 +92,14 @@ document.addEventListener("pointerdown", () => {
   unlockAudio(soundUrl(state.settings.soundId));
 }, { once: true });
 document.addEventListener("pointerdown", (event) => {
+  // Ask for the screen lock before anything else. iOS spends the tap on the
+  // first request, and the ringtone unlock has to come after that.
+  renewWakeLock();
   if (alarms.needsGesture()) alarms.playFromGesture();
-  wakeFailed = false;
   noteActivity(event);
-  syncWakeLock();
+});
+document.addEventListener("click", () => {
+  renewWakeLock();
 });
 document.addEventListener("click", onWorkCoverClick);
 workCover.addEventListener("click", (event) => {
@@ -120,8 +125,11 @@ document.addEventListener("dragstart", (event) => {
   event.preventDefault();
 });
 document.addEventListener("visibilitychange", () => {
-  wakeFailed = false;
-  if (document.visibilityState !== "visible") return;
+  wakeBlocked = false;
+  if (document.visibilityState !== "visible") {
+    holdWakeLock(false);
+    return;
+  }
   // Coming back is a new look. A mushroom that respawned while we were away stays quiet.
   arrive(Date.now());
   tick();
@@ -326,7 +334,7 @@ function tick() {
   paintEditLive();
   alarms.setOrder(playableOrder(now));
   if (state.sheet?.type === "settings") paintPreviewButton();
-  syncWakeLock();
+  holdWakeLock(false);
   syncDim(now);
 }
 
@@ -614,8 +622,8 @@ function settingsMarkup() {
   const secondsLocked = settings.cooldownMin === 5;
   const previewLocked = settings.soundId === "mute" || Boolean(alarms.playingId());
   const wakeHint = "wakeLock" in navigator
-    ? "幾分鐘沒有點螢幕，就蓋上黑畫面，只留深綠色倒數。這個頁面在前景時會保持亮著。"
-    : "幾分鐘沒有點螢幕，就蓋上黑畫面，只留深綠色倒數。這台瀏覽器可能無法阻止螢幕自己關掉。";
+    ? "有鬧鐘的時候，這個頁面在前景就保持亮著，手機不會自己睡著。幾分鐘沒點螢幕，會蓋上黑畫面，只留深綠色倒數。"
+    : "有鬧鐘的時候，這個頁面也要保持亮著，但這台瀏覽器可能無法阻止螢幕自己關掉。幾分鐘沒點螢幕，會蓋上黑畫面，只留深綠色倒數。";
   return `
     <div class="sheet-head"><h2 id="sheetTitle">設定</h2><button type="button" data-action="close">完成</button></div>
     <div class="settings-body">
@@ -832,40 +840,57 @@ function deleteEdit(button) {
 }
 
 let wakeSentinel = null;
-let wakeFailed = false;
-let wakePending = false;
+let wakeBlocked = false;
+let wakeInFlight = false;
+let wakeSerial = 0;
 
-async function syncWakeLock() {
-  const want = document.visibilityState === "visible";
+function releaseHeldLock() {
+  const current = wakeSentinel;
+  wakeSentinel = null;
+  wakeSerial += 1;
+  if (current) current.release().catch(() => {});
+}
+
+// iOS only grants a screen lock from a user gesture. A failed request at load
+// used to stick, so the phone slept with alarms on the board. A tap asks again
+// immediately. If the system takes the lock back, ask again right away.
+function renewWakeLock() {
+  wakeBlocked = false;
+  holdWakeLock(true);
+}
+
+async function holdWakeLock(fromGesture) {
+  const want = shouldHoldWakeLock(state.timers.length, document.visibilityState);
   if (!want) {
-    if (wakeSentinel) {
-      const current = wakeSentinel;
-      wakeSentinel = null;
-      current.release().catch(() => {});
-    }
+    wakeBlocked = false;
+    releaseHeldLock();
     return;
   }
-  if (wakeSentinel || wakeFailed || wakePending || !navigator.wakeLock) return;
-  wakePending = true;
+  if (!navigator.wakeLock || wakeSentinel) return;
+  if (!fromGesture && (wakeBlocked || wakeInFlight)) return;
+  const serial = ++wakeSerial;
+  wakeInFlight = true;
   try {
     const sentinel = await navigator.wakeLock.request("screen");
-    if (document.visibilityState !== "visible") {
+    if (serial !== wakeSerial || !shouldHoldWakeLock(state.timers.length, document.visibilityState)) {
       sentinel.release().catch(() => {});
       return;
     }
     wakeSentinel = sentinel;
+    wakeBlocked = false;
     sentinel.addEventListener("release", () => {
-      if (wakeSentinel === sentinel) wakeSentinel = null;
+      if (wakeSentinel !== sentinel) return;
+      wakeSentinel = null;
+      holdWakeLock(false);
     });
-  } catch {
-    wakeFailed = true;
-    wakeSentinel = null;
+  } catch (error) {
+    if (serial === wakeSerial && error?.name === "NotAllowedError") wakeBlocked = true;
   } finally {
-    wakePending = false;
+    if (serial === wakeSerial) wakeInFlight = false;
   }
 }
 
-syncWakeLock();
+holdWakeLock(false);
 
 function escapeAttr(value) {
   return String(value).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");

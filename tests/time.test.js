@@ -6,6 +6,7 @@ import {
   applyReading,
   clampCooldown,
   clampDimIdle,
+  shouldHoldWakeLock,
   describeDraft,
   draftToRespawn,
   formatClock,
@@ -82,6 +83,15 @@ describe("screenshot clock", () => {
   it("resolves 12:05 just after midnight as 00:05", () => {
     const suggested = suggestAnchor({ hour: 12, minute: 5, now: at(0, 20, 0) });
     assert.equal(formatClock(suggested.anchor, { seconds: false }), "00:05");
+  });
+});
+
+describe("screen stay awake", () => {
+  it("holds the screen only while an alarm is on the visible page", () => {
+    assert.equal(shouldHoldWakeLock(1, "visible"), true);
+    assert.equal(shouldHoldWakeLock(7, "visible"), true);
+    assert.equal(shouldHoldWakeLock(0, "visible"), false);
+    assert.equal(shouldHoldWakeLock(2, "hidden"), false);
   });
 });
 
